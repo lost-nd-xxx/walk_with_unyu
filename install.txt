@@ -1,0 +1,4 @@
+charset,UTF-8
+type,ghost
+name,作業応援うにゅう
+directory,lnx_walk_with_unyu

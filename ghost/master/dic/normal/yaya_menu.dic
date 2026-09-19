@@ -1,0 +1,141 @@
+//******************************************************************************
+// YAYA　ゴーストテンプレート
+// メニュー処理辞書
+//******************************************************************************
+
+//******************************************************************************
+//メインメニューの展開
+//
+//AYATEMPLATE.MenuItemの使い方
+//1つめの文字列＝選択肢に表示する文字列
+//2つめの文字列＝選んだときに実行される関数名
+//3つめの文字列＝改行する量　50%刻み　省略すると100%（＝\n）
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+//メインメニュー展開
+//------------------------------------------------------------------------------
+OpenMenu
+{
+	'\![quicksection,1]'
+	--
+	AYATEMPLATE.MenuItem("作業を始める","UnyuWorkMenu",150)
+	--
+	'\n[50]'
+	--
+	AYATEMPLATE.MenuItem("なんか話して","Menu_AITALK")
+	--
+	if ( STRLEN(AYATEMPLATE.LastTalk) > 0 ) {
+		AYATEMPLATE.MenuItem("さっきの話は？","Menu_LASTTALK")
+	}
+	else {
+		'\n\![*]\f[disable]さっきの話は？\f[default]'
+	}
+	--
+	AYATEMPLATE.MenuItem("しゃべり頻度を変えて","Menu_TALKINTERVAL")
+	--
+	AYATEMPLATE.MenuItem("呼び名を変えて","Menu_ChangeUserName")
+	--
+	AYATEMPLATE.MenuItem("なんでもない","Menu_CANCEL",150)
+	--
+	'\![quicksection,0]\_l[0,0]\0\s[0]'
+	--
+	'ん…\w5…\w5、\w5なんや？'
+	"なんや、\w5%(username)？"
+	'おう、\w5ワイやで。'
+	--
+	'\e'
+}
+
+//******************************************************************************
+//各項目の処理内容
+//******************************************************************************
+
+//---- 何か話して
+Menu_AITALK
+{
+	//---- 明示的にAIトーク開始を指示
+	OnAiTalk
+}
+
+//---- さっきの話は
+Menu_LASTTALK
+{
+	AYATEMPLATE.LastTalk
+}
+
+//---- トーク頻度の調整
+Menu_TALKINTERVAL
+{
+	'\0\s[0]どのくらいがええん？'
+	--
+	AYATEMPLATE.MenuItem("うるさいくらい","Menu_TALKMAX",150)
+	--
+	AYATEMPLATE.MenuItem("ふつう","Menu_TALKNORMAL")
+	--
+	AYATEMPLATE.MenuItem("静か","Menu_TALKPOOR")
+	--
+	AYATEMPLATE.MenuItem("黙ってて","Menu_TALKNONE")
+	--
+	AYATEMPLATE.MenuItem("戻る","OpenMenu",150)
+}
+
+//---- キャンセルされた
+Menu_CANCEL
+{
+	'\0\s[0]おう。\e'
+	'\0\s[0]承知の助。\e'
+	'\0\s[0]がってん。\e'
+}
+
+//---- トーク頻度
+Menu_TALKMAX
+{
+	//---- うるさく話す(15秒間隔)
+	aitalkinterval = 15
+	'\0\s[0]ましんがんとーく、\w5やね。\w9\n具体的には１５秒間隔やで。\e'
+}
+
+Menu_TALKNORMAL
+{
+	//---- ふつうに話す(3分間隔)
+	aitalkinterval = 180
+	'\0\s[0]３分間隔やね。\e'
+}
+
+Menu_TALKPOOR
+{
+	//---- 静かに話す(5分間隔)
+	aitalkinterval = 300
+	'\0\s[0]ほな、\w5静かにしとるで。\w9５分間隔やね。\e'
+}
+
+Menu_TALKNONE
+{
+	//---- 話さない
+	aitalkinterval = 0
+	'\0\s[0]し～ん。\e'
+}
+
+//---- ヘッドライン
+Menu_HEADLINECANCEL
+{
+	//---- キャンセルされた
+	'\0\s[0]おう。\e'
+}
+
+//ユーザ名変更
+Menu_ChangeUserName
+{
+	'\0\s[0]ほな、呼ばれたい名前を入れてな。'
+	--
+	"\![open,inputbox,OnInputUserName,0,%(username)]\e"
+}
+
+OnInputUserName
+{
+	if unyu_running != 1 {
+		username = SHIORI3FW.EscapeAllTags(reference[0])
+		"\0\s[0]%(username)\w5　って呼べばええんやね。\e"
+	}
+}

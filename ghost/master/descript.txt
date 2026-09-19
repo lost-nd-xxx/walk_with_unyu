@@ -1,0 +1,14 @@
+charset,UTF-8
+
+craftman,lost_nd_xxx
+craftmanw,ろすえん
+craftmanurl,https://lnx.flop.jp/
+
+name,作業応援うにゅう
+type,ghost
+
+sakura.name,回すうにゅう
+kero.name,回し車
+
+shiori,yaya.dll
+icon,icon.ico

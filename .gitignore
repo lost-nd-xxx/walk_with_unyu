@@ -1,0 +1,34 @@
+# 実行時に作られるもの
+/ghost/master/yaya_variable.cfg
+/ghost/master/profile/
+/shell/master/profile/
+/ghost/master/messagetxt/*.bak
+/etc/tama.txt
+updates2.dau
+*.nar
+/build/
+
+# 開発キット（配布元 https://github.com/YAYA-shiori/konnoyayame から再導入できる）
+/AGENTS.md
+/CLAUDE.md
+/DEVKIT-GUIDE.md
+/.mcp.json
+/.claude/
+/.github/
+/docs/
+/tools/
+/ghost/master/yayalint_config.lua
+
+# システム辞書の説明文書（yaya-dic に同梱。手元で読めればよい）
+/ghost/master/dic/system/docs/
+/ghost/master/system/docs/
+
+# キットが置いていくもの
+*.devkit-new
+*.yaya-dic-new
+
+# シェルの元データ（別途バックアップ。リポジトリには置かない）
+/_workspace/
+
+# 開発方針
+/GHOST.md
