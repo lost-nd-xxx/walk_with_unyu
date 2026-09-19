@@ -1,7 +1,7 @@
 charset,UTF-8
 file,.narignore582d98f9ef49163880b6010837d778c8size=1236date=2026-09-19T16:19:06
 file,.updateignore740d8586d7d16e8b00a11fd082d81483size=273date=2026-09-15T20:12:07
-file,README.md1d55ccda49162ba6563c146061cb16fbsize=3108date=2026-09-19T17:33:15
+file,README.md87e79e51c4a82fd6a0a8c4ef5e61841asize=3302date=2026-09-19T17:59:00
 file,install.txt2f75fa94a5ef914b205eb7f08724e47csize=84date=2026-09-19T14:30:00
 file,readme-aya.txtca7ca11cf43709352523e72259116a8asize=588date=2026-09-15T20:12:07
 file,readme-yaya.txt92c88333a5b56e4bbc2aaff460afd676size=2154date=2026-09-15T20:12:07
