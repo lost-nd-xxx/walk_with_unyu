@@ -12,3 +12,4 @@ kero.name,回し車
 
 shiori,yaya.dll
 icon,icon.ico
+homeurl,https://raw.githubusercontent.com/lost-nd-xxx/walk_with_unyu/main/
