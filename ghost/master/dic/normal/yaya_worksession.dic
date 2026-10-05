@@ -72,17 +72,43 @@ UnyuWorkMenu
 	--
 	'\w9\nどんくらい歩いたらええ？\![quicksection,1]'
 	--
-	AYATEMPLATE.MenuItem("１５分","UnyuStart15",150)
+	//---- 時間は 2 列に並べる
+	UnyuShortMenuItem("１５分","UnyuStart15",150)
 	--
-	AYATEMPLATE.MenuItem("２５分","UnyuStart25")
+	UnyuShortMenuItem("２５分","UnyuStart25",0)
 	--
-	AYATEMPLATE.MenuItem("６０分","UnyuStart60")
+	UnyuShortMenuItem("４５分","UnyuStart45",100)
+	--
+	UnyuShortMenuItem("６０分","UnyuStart60",0)
+	--
+	AYATEMPLATE.MenuItem("時間を自分で決める","UnyuAskMinutes")
 	--
 	AYATEMPLATE.MenuItem("見るファイルを決める","UnyuAskPath",150)
 	--
 	AYATEMPLATE.MenuItem("やっぱやめとく","UnyuCancelMenu",150)
 	--
 	'\![quicksection,0]\e'
+}
+
+//------------------------------------------------------------------------------
+// 横に並べる用の、幅の狭い選択肢（全角 10 字ぶん）
+// _argv[2] は改行の量。AYATEMPLATE.MenuItem と同じく 100 で 1 行、50 で半行、0 なら改行しない
+//------------------------------------------------------------------------------
+UnyuShortMenuItem
+{
+	_lftext   = ''
+	_linefeed = _argv[2]
+	while _linefeed > 0 {
+		if _linefeed >= 100 {
+			_lftext += '\n'
+		}
+		else {
+			_lftext += '\n[half]'
+		}
+		_linefeed -= 100
+	}
+
+	_lftext + '\![*]\q[' + AYATEMPLATE.EscapeText(SHIORI3FW.MakeJustText(_argv[0],20)) + ',' + _argv[1] + ']'
 }
 
 //------------------------------------------------------------------------------
@@ -180,9 +206,59 @@ UnyuStart25
 	UnyuStartCheck
 }
 
+UnyuStart45
+{
+	unyu_limitmin = 45
+	--
+	UnyuStartCheck
+}
+
 UnyuStart60
 {
 	unyu_limitmin = 60
+	--
+	UnyuStartCheck
+}
+
+//------------------------------------------------------------------------------
+// 作業時間を自分で決める（5〜120 分）
+// ID を On で始めると、その名前のイベントが直接発生する
+//------------------------------------------------------------------------------
+UnyuAskMinutes
+{
+	'\0\s[0]\![set,balloontimeout,0]'
+	--
+	'何分歩いたらええ？\w9\n数字で教えてな。\w9\n（5〜120分）'
+	--
+	'\![open,inputbox,OnUnyuSetMinutes,0]'
+	--
+	'\e'
+}
+
+OnUnyuSetMinutes
+{
+	//---- ID が On で始まるイベントなので、Reference は一つ前にずれる
+	//---- 全角の数字や「分」、空白が付いていても受け付ける
+	_text = ZEN2HAN(reference[0])
+	_text = REPLACE(_text,'分','')
+	_text = REPLACE(_text,' ','')
+
+	if !ISINTSTR(_text) {
+		UnyuWorkMenu('数字で頼むわ。')
+		return
+	}
+
+	_min = TOINT(_text)
+	if _min < 5 {
+		UnyuWorkMenu('それやと短すぎるわ。\w9\n5分からにしといてな。')
+		return
+	}
+	if _min > 120 {
+		UnyuWorkMenu('そんな長いこと歩かれへんわ。\w9\n120分までにしといてな。')
+		return
+	}
+
+	unyu_limitmin = _min
 	--
 	UnyuStartCheck
 }
@@ -259,6 +335,12 @@ OnUnyuSetPath
 //------------------------------------------------------------------------------
 OnUserInputCancel
 {
+	//---- 時間の入力をやめたときは、作業準備画面に戻す
+	if reference[0] == 'OnUnyuSetMinutes' {
+		UnyuWorkMenu('ほな、\w5選び直そか。')
+		return
+	}
+
 	if reference[0] != 'OnUnyuSetPath' {
 		return
 	}
@@ -366,8 +448,9 @@ UnyuTick
 
 	_elapsedmin = UnyuElapsedMin
 
-	if reference[3]=='1' {
-		//喋れないので何も言わない
+	//---- reference[3] はトークを再生できるときに 1、できないときは 0（UKADOC）
+	//---- 再生できないときに返したスクリプトは無視されるので、何もせずに返る
+	if reference[3] != '1' {
 		return
 	}
 
@@ -535,7 +618,20 @@ UnyuFinish
 	--
 	'\0\s[0]'
 	--
+	UnyuFinishNotice
+	--
 	UnyuReportTalk(_min,_count,_diff)
+}
+
+//------------------------------------------------------------------------------
+// 時間が来たことのお知らせ（終わりの報告の頭に付ける）
+// 分数は報告のほうで言うので、ここでは言わない
+//------------------------------------------------------------------------------
+UnyuFinishNotice : nonoverlap
+{
+	'作業時間、\w5終わりやで。\w9\n'
+	'はい、\w5時間や。\w9\n'
+	'設定時間、ここまでやで。\w9ワイも休憩するわ。\w9\n'
 }
 
 //------------------------------------------------------------------------------
