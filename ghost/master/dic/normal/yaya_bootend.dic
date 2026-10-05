@@ -32,6 +32,7 @@ OnSystemLoad.RemoveTempVar
 	ERASEVAR('unyu_filegone')
 	ERASEVAR('unyu_inwatchmenu')
 	ERASEVAR('unyu_editindex')
+	ERASEVAR('unyu_dropscreen')
 }
 
 //******************************************************************************

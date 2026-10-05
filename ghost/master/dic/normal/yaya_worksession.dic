@@ -42,6 +42,7 @@
 //   ---- ここから見るファイルの画面で使う
 //   unyu_inwatchmenu 見るファイルの画面から入力ボックスを開いたなら 1（入力の後にその画面へ戻る）
 //   unyu_editindex   入力ボックスで差し替えるファイルの番号。足すときは -1
+//   unyu_dropscreen  ドロップでファイルを足せる画面（作業準備・ポモドーロの設定・見るファイル）を出したなら 1
 //******************************************************************************
 
 //------------------------------------------------------------------------------
@@ -61,7 +62,7 @@ OnSystemLoad.UnyuSession
 //------------------------------------------------------------------------------
 UnyuSessionInit
 {
-	SHIORI3FW.RegisterTempVar('unyu_running','unyu_mode','unyu_phase','unyu_starttick','unyu_limitmin','unyu_watchfiles','unyu_filealive','unyu_filecounts','unyu_filegone','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave','unyu_phasetick','unyu_cycle','unyu_cyclecount','unyu_cyclebase','unyu_worktotal','unyu_breakmin','unyu_breaksave','unyu_inwatchmenu','unyu_editindex')
+	SHIORI3FW.RegisterTempVar('unyu_running','unyu_mode','unyu_phase','unyu_starttick','unyu_limitmin','unyu_watchfiles','unyu_filealive','unyu_filecounts','unyu_filegone','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave','unyu_phasetick','unyu_cycle','unyu_cyclecount','unyu_cyclebase','unyu_worktotal','unyu_breakmin','unyu_breaksave','unyu_inwatchmenu','unyu_editindex','unyu_dropscreen')
 
 	if !ISVAR('unyu_running') {
 		unyu_running = 0
@@ -71,6 +72,7 @@ UnyuSessionInit
 	}
 	unyu_inwatchmenu = 0
 	unyu_editindex   = -1
+	unyu_dropscreen  = 0
 
 	//---- 見るファイル。以前の 1 ファイルだけの設定（unyu_watchpath）があれば移す
 	if !ISVAR('unyu_watchpaths') {
@@ -156,6 +158,7 @@ UnyuWorkMenu
 	unyu_limitmin    = 0
 	unyu_mode        = 'single'
 	unyu_inwatchmenu = 0
+	unyu_dropscreen  = 1
 
 	'\0\s[0]\![quicksection,1]'
 	--
@@ -470,6 +473,7 @@ UnyuJoinNames
 UnyuWatchMenu
 {
 	unyu_inwatchmenu = 1
+	unyu_dropscreen  = 1
 
 	_list = UnyuWatchList
 	_n    = ARRAYSIZE(_list)
@@ -487,6 +491,11 @@ UnyuWatchMenu
 	}
 	else {
 		"今見とるんは、この%(HAN2ZEN(_n,'num'))つや。"
+	}
+	--
+	//---- ドロップで足せることを知らせる（この画面を開いている間だけ足せる。OnFileDrop2）
+	if _n < UnyuWatchMax {
+		'\nファイルをワイに落としても、足せるで。'
 	}
 	--
 	//---- 見当たらないファイルは灰色にして、印を付ける（押せば今までどおり差し替えられる）
@@ -527,6 +536,137 @@ UnyuWatchMenu
 	AYATEMPLATE.MenuItem("戻る","UnyuWatchBack",150)
 	--
 	'\![quicksection,0]\e'
+}
+
+//******************************************************************************
+// ドラッグ＆ドロップでファイルを足す
+//
+// 受け付けるのは、設定の画面（作業準備・ポモドーロの設定・見るファイル）を開いている間だけ。
+// それ以外は空を返して、SSP のいつもの処理（.nar のインストール、画像や音声を開く、など）に任せる。
+// ゴーストが応答しなければ SSP が処理する（UKADOC: OnArchiveViewerOpen などの説明）。
+//
+// reference[0] ドロップされたパス。いくつも落とされたときはバイト値 1 で区切られる
+// reference[1] 落とされたキャラクターのスコープ番号
+// reference[2] MIME タイプ（同じく区切られる）
+//******************************************************************************
+
+OnFileDrop2
+{
+	if !UnyuDropAccepting {
+		return
+	}
+
+	_paths = SPLIT(reference[0],CHR(1))
+
+	//---- ゴーストなどの .nar は、受付中でも SSP のインストールに任せる
+	foreach _paths ; _path {
+		if TOLOWER(SPLITPATH(_path)[3]) == '.nar' {
+			return
+		}
+	}
+
+	UnyuDropAdd(_paths)
+}
+
+//------------------------------------------------------------------------------
+// 今ドロップを受け付けるなら 1
+// 設定の画面を出したときに unyu_dropscreen を立て、ほかの選択肢の画面（メインメニューなど）で下ろす。
+// 画面が閉じたかどうかは、SSP が毎回のイベントに付ける Status ヘッダ（システム辞書の変数 status）に
+// choosing（選択肢を出している最中）があるかで見る。閉じた後の印の下ろし忘れはこれで防げる
+//------------------------------------------------------------------------------
+UnyuDropAccepting
+{
+	!unyu_running && unyu_dropscreen && ('choosing' _in_ status)
+}
+
+//------------------------------------------------------------------------------
+// ドロップされたパス（_argv）を足して、結果を言いながら見るファイルの画面を出す
+// 足せないものは理由ごとに分けて伝える。足せるだけ足す
+//------------------------------------------------------------------------------
+UnyuDropAdd
+{
+	_list    = UnyuWatchList
+	_added   = IARRAY
+	_dup     = IARRAY
+	_folder  = IARRAY
+	_missing = IARRAY
+	_over    = IARRAY
+
+	for _i = 0 ; _i < _argc ; _i++ {
+		_path = _argv[_i]
+		if STRLEN(_path) <= 0 {
+			continue
+		}
+		_name = SHIORI3FW.EscapeAllTags(UnyuWatchFileName(_path))
+
+		//---- フォルダは見ない（どのファイルが変わったか分からないため）。FSIZE はフォルダだと -1
+		_attr = FATTRIB(_path)
+		if GETTYPE(_attr) == 4 && _attr[2] {
+			_folder ,= _name
+			continue
+		}
+		if FSIZE(_path) < 0 {
+			_missing ,= _name
+			continue
+		}
+
+		_known = 0
+		foreach _list ; _p {
+			if TOLOWER(_p) == TOLOWER(_path) {
+				_known = 1
+			}
+		}
+		if _known {
+			_dup ,= _name
+			continue
+		}
+
+		if ARRAYSIZE(_list) >= UnyuWatchMax {
+			_over ,= _name
+			continue
+		}
+
+		_list  ,= _path
+		_added ,= _name
+	}
+
+	if ARRAYSIZE(_added) > 0 {
+		UnyuWatchListSet(_list)
+	}
+
+	//---- 結果をまとめて言う
+	_talk = ''
+	if ARRAYSIZE(_added) > 0 {
+		_talk += "%(UnyuJoinNames(_added))を足したで。"
+	}
+	if ARRAYSIZE(_dup) > 0 {
+		_talk += UnyuDropSep(_talk) + "%(UnyuJoinNames(_dup))は、\w5もう見とるで。"
+	}
+	if ARRAYSIZE(_over) > 0 {
+		_talk += UnyuDropSep(_talk) + "%(HAN2ZEN(UnyuWatchMax,'num'))つまでやから、\w5%(UnyuJoinNames(_over))は足されへんかったわ。"
+	}
+	if ARRAYSIZE(_folder) > 0 {
+		_talk += UnyuDropSep(_talk) + "フォルダは見られへんから、\w5%(UnyuJoinNames(_folder))は足してへんで。"
+	}
+	if ARRAYSIZE(_missing) > 0 {
+		_talk += UnyuDropSep(_talk) + "%(UnyuJoinNames(_missing))は、\w5見つからんかったわ。"
+	}
+	if STRLEN(_talk) <= 0 {
+		_talk = 'ん？\w5なんも足されへんかったわ。'
+	}
+
+	UnyuWatchMenu(_talk)
+}
+
+//---- 結果の文をつなぐ区切り（最初の文の前には付けない）
+UnyuDropSep
+{
+	if STRLEN(_argv[0]) > 0 {
+		'\w9\n'
+	}
+	else {
+		''
+	}
 }
 
 //---- 元の設定画面に戻る
@@ -726,6 +866,8 @@ UnyuStartSingle
 //------------------------------------------------------------------------------
 UnyuAskMinutes
 {
+	unyu_dropscreen = 0
+
 	'\0\s[0]\![set,balloontimeout,0]'
 	--
 	'何分歩いたらええ？\w9\n数字で教えてな。\w9\n（５〜１２０分）'
@@ -807,6 +949,8 @@ UnyuStartCheck
 //------------------------------------------------------------------------------
 UnyuAskPathAdd
 {
+	unyu_dropscreen = 0
+
 	unyu_editindex = -1
 
 	'\0\s[0]\![set,balloontimeout,0]'
@@ -832,6 +976,7 @@ UnyuAskPathEdit
 	}
 
 	unyu_editindex = _argv[0]
+	unyu_dropscreen = 0
 
 	'\0\s[0]\![set,balloontimeout,0]'
 	--
@@ -1720,6 +1865,7 @@ UnyuPomoMenu
 	unyu_limitmin    = 0
 	unyu_mode        = 'pomo'
 	unyu_inwatchmenu = 0
+	unyu_dropscreen  = 1
 
 	'\0\s[0]\![quicksection,1]'
 	--
@@ -1800,6 +1946,8 @@ UnyuPomoAskSets
 //---- _argv[0] は設定の名前、_argv[1] は入力ボックスの ID
 UnyuPomoAskValue
 {
+	unyu_dropscreen = 0
+
 	_key  = _argv[0]
 	_unit = UnyuPomoUnit(_key)
 

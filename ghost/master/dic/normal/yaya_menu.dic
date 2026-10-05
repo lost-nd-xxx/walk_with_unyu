@@ -17,6 +17,9 @@
 //------------------------------------------------------------------------------
 OpenMenu
 {
+	//---- ドロップでファイルを足せる画面ではない（yaya_worksession.dic の UnyuDropAccepting）
+	unyu_dropscreen = 0
+
 	'\![quicksection,1]'
 	--
 	AYATEMPLATE.MenuItem("作業を始める","UnyuWorkMenu",150)
@@ -67,6 +70,9 @@ Menu_LASTTALK
 //---- トーク頻度の調整
 Menu_TALKINTERVAL
 {
+	//---- ドロップでファイルを足せる画面ではない（yaya_worksession.dic の UnyuDropAccepting）
+	unyu_dropscreen = 0
+
 	//---- 作業中の途中経過からも来るので、表情は DefaultSurface に任せる（作業中は歩いたまま）
 	DefaultSurface
 	--
