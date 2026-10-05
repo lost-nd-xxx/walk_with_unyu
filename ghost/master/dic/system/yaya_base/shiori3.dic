@@ -324,19 +324,70 @@ C_BYTE1
 //------------------------------------------------------------------------------
 //関数名：AyaTest.Eval
 //機能　：受け取った文字列をEVALして返す
+//備考　：EVALする文字列とローカル変数が衝突しないよう、長い変数名を使う
+//　　　　複数行は、EVALが文の並びを受け付ける版（Tc574-6 / Tc602-9以降）なら
+//　　　　まとめて1回でEVALする（ローカル変数が次の行に持ち越される。Tc574-8 / Tc603-1以降はヒアドキュメントも使える）。
+//　　　　それより前の版では1行ずつEVALして結果をつなげる
 //------------------------------------------------------------------------------
 AyaTest.Eval
 {
-	_array = SPLIT(_argv[0],C_CRLF)
-	_result = ''
-	_n = ARRAYSIZE(_array)
+	_AyaTest_Eval_code = _argv[0]
+	_AyaTest_Eval_len = STRLEN(_AyaTest_Eval_code)
+	while _AyaTest_Eval_len >= 2 && SUBSTR(_AyaTest_Eval_code, _AyaTest_Eval_len - 2, 2) == C_CRLF {
+		_AyaTest_Eval_len -= 2
+		_AyaTest_Eval_code = SUBSTR(_AyaTest_Eval_code, 0, _AyaTest_Eval_len)
+	}
 
-	for _i = 0 ; _i < _n ; _i++ {
-		if _array[_i] {
-			_result += EVAL(_array[_i])
+	if STRSTR(_AyaTest_Eval_code, C_CRLF, 0) < 0 || !AyaTest.EvalAcceptsStatements {
+		AyaTest.EvalLines(_AyaTest_Eval_code)
+		return
+	}
+	EVAL(REPLACE(_AyaTest_Eval_code, C_CRLF, CHR(0xa)))
+}
+
+//------------------------------------------------------------------------------
+//関数名：AyaTest.EvalAcceptsStatements
+//機能　：EVALが文の並び（複数行や;で区切った文）を受け付ける版なら1を返す
+//------------------------------------------------------------------------------
+AyaTest.EvalAcceptsStatements
+{
+	_ver = GETSETTING('coreinfo.version')
+	if SUBSTR(_ver, 0, 2) != 'Tc' {
+		0
+		return
+	}
+	_hyphen = STRSTR(_ver, '-', 0)
+	if _hyphen < 0 {
+		0
+		return
+	}
+	_major = TOINT(SUBSTR(_ver, 2, _hyphen - 2))
+	_build = TOINT(SUBSTR(_ver, _hyphen + 1, STRLEN(_ver)))
+	if _major >= 600 {
+		_major > 602 || (_major == 602 && _build >= 9)
+	}
+	else {
+		_major > 574 || (_major == 574 && _build >= 6)
+	}
+}
+
+//------------------------------------------------------------------------------
+//関数名：AyaTest.EvalLines
+//機能　：受け取った文字列を1行ずつEVALし、結果をつなげて返す
+//備考　：EVALする文字列とローカル変数が衝突しないよう、長い変数名を使う
+//------------------------------------------------------------------------------
+AyaTest.EvalLines
+{
+	_AyaTest_Eval_lines = SPLIT(_argv[0],C_CRLF)
+	_AyaTest_Eval_result = ''
+	_AyaTest_Eval_count = ARRAYSIZE(_AyaTest_Eval_lines)
+
+	for _AyaTest_Eval_index = 0 ; _AyaTest_Eval_index < _AyaTest_Eval_count ; _AyaTest_Eval_index++ {
+		if _AyaTest_Eval_lines[_AyaTest_Eval_index] {
+			_AyaTest_Eval_result += EVAL(_AyaTest_Eval_lines[_AyaTest_Eval_index])
 		}
 	}
-	_result
+	_AyaTest_Eval_result
 }
 
 //------------------------------------------------------------------------------
@@ -375,6 +426,87 @@ request
 		return
 	}
 
+#ifdef __AYA_SYSTEM_YAYA6__
+	// YAYA 600系：リクエストの解析はPARSEHEADERでまとめて行う
+	if STRSTR(_argv[0], C_CRLF, 0) <= 0 {
+		//1行目すらない！
+		"SHIORI/3.0 400 Bad Request%(C_CRLF)Charset: %(S_CHARSET)%(C_CRLF2)"
+		return
+	}
+
+	_conv = 1 // TOAUTOEXと同じ変換
+	if SHIORI3FW.AUTO_DATA_CONVERT {
+		_conv = 0
+	}
+	_req = PARSEHEADER(_argv[0], _conv)
+	_lin = _req['start']
+
+	// リクエスト種別とプロトコル名の取得　エラーなら400
+	REQ.COMMAND  = _lin[0,' SHIORI']
+	REQ.PROTOCOL = 'SHIORI' + _lin[1,' SHIORI']
+
+	// リクエストヘッダの取得
+	var.req.key   = _req['key']
+	var.req.rawvalue = _req['rawvalue']
+
+	if SHIORI3FW.AUTO_DATA_CONVERT {
+		var.req.value = IARRAY
+		foreach var.req.rawvalue; _value {
+			if ISINTSTR(_value) {
+				var.req.value ,= TOINT(_value)
+			}
+			elseif ISREALSTR(_value) {
+				var.req.value ,= TOREAL(_value)
+			}
+			else {
+				var.req.value ,= REPLACE(_value, C_BYTE1, ',')// バイト値1はカンマ化してしまう
+			}
+		}
+	}
+	else {
+		var.req.value = _req['value']
+	}
+
+	status = ''
+	SHIORI3FW.Eventid=''
+	SHIORI3FW.SecurityLevel='local'//互換性のためデフォルトはlocal
+
+	// 値はTOAUTOEXで変換されていることがあるので、TOSTRで元の文字列に戻す
+	_header = _req['header']
+
+	if HASH_EXIST('Charset', _header) {
+		_value = TOSTR(_header['Charset'])
+		if S_CHARSET != _value {
+			void SETSETTING('charset.output',_value)
+			S_CHARSET = _value
+		}
+	}
+	// イベントID名称を取得
+	if HASH_EXIST('ID', _header) {
+		// 取得　名前先頭が'On'でないなら付加
+		SHIORI3FW.Eventid = TOSTR(_header['ID'])
+		if SUBSTR(SHIORI3FW.Eventid, 0, 2) != 'On' {
+			SHIORI3FW.Eventid = 'On_' + SHIORI3FW.Eventid
+		}
+	}
+	// セキュリティレベル
+	if HASH_EXIST('SecurityLevel', _header) {
+		SHIORI3FW.SecurityLevel = TOSTR(_header['SecurityLevel'])
+	}
+	// ベースウェア名取得
+	if HASH_EXIST('Sender', _header) {
+		_value = TOSTR(_header['Sender'])
+		if basewarenameex == '' {
+			basewarenameex = _value
+		}
+		basewarename = _value
+		sender = _value
+	}
+	//Status
+	if HASH_EXIST('Status', _header) {
+		status = TOSTR(_header['Status'])
+	}
+#else
 	_reqdata = _argv[0]
 	_linestart = 0
 	_lineend = STRSTR(_reqdata, C_CRLF, _linestart)
@@ -470,6 +602,7 @@ request
 			var.req.value ,= TOAUTOEX(_value)
 		}
 	}
+#endif
 
 	if SHIORI3FW.Eventid == 'OnAiTalk' || SHIORI3FW.Eventid == 'OnAITalk' {
 		SHIORI3FW.Eventid = 'OnAITalkNewEvent'
@@ -1482,19 +1615,38 @@ GET_PROPERTY
 	
 	_request = "EXECUTE SSTP/1.1%(C_CRLF)Command: GetProperty%(C_CRLF)Reference0: %(_argv[0])%(C_CRLF)Sender: YAYA%(C_CRLF)Charset: UTF-8%(C_CRLF)%(C_CRLF)"
 	
-	_response = DIRECTSSTP(SHIORI3FW.HWnd[0],_request)
+	_response = DIRECTSSTP(TOINT(SHIORI3FW.HWnd[0]),_request) // DIRECTSSTPのhwndは整数でないといけない
 	if _response == -1 {
 		""
 		return
 	}
-	
+
+#ifdef __AYA_SYSTEM_YAYA6__
+	// YAYA 600系：レスポンスの解析はPARSEHEADERで行う
+	_res = PARSEHEADER(_response)
+	_lin = _res['start']
+
+	if "200" !_in_ _lin && "204" !_in_ _lin {
+		""
+		return
+	}
+
+	// 値は空行より後ろ　末尾の改行は取り除く
+	_value = _res['body']
+	_len = STRLEN(_value)
+	while _len >= 2 && SUBSTR(_value, _len - 2, 2) == C_CRLF {
+		_len -= 2
+		_value = SUBSTR(_value, 0, _len)
+	}
+	_value
+#else
 	_respose_array = SPLIT(_response,C_CRLF)
-	
+
 	if "200" !_in_ _respose_array[0] && "204" !_in_ _respose_array[0] {
 		""
 		return
 	}
-	
+
 	_n = ARRAYSIZE(_respose_array)
 	_value = ""
 	_empty_line_found = 0
@@ -1513,8 +1665,9 @@ GET_PROPERTY
 			}
 		}
 	}
-	
+
 	_value
+#endif
 }
 
 //------------------------------------------------------------------------------
@@ -1531,15 +1684,16 @@ SET_PROPERTY
 	
 	_request = "EXECUTE SSTP/1.1%(C_CRLF)Command: SetProperty%(C_CRLF)Reference0: %(_argv[0])%(C_CRLF)Reference1: %(_argv[1])%(C_CRLF)Sender: YAYA%(C_CRLF)Charset: UTF-8%(C_CRLF)%(C_CRLF)"
 
-	_response = DIRECTSSTP(SHIORI3FW.HWnd[0],_request)
+	_response = DIRECTSSTP(TOINT(SHIORI3FW.HWnd[0]),_request) // DIRECTSSTPのhwndは整数でないといけない
 	if _response == -1 {
 		0
 		return
 	}
-	
-	_respose_array = SPLIT(_response,C_CRLF)
 
-	if "200" _in_ _respose_array[0] || "204" _in_ _respose_array[0] {
+	// 見るのは1行目だけなので、全体を分割しない
+	_lin = _response[0,C_CRLF]
+
+	if "200" _in_ _lin || "204" _in_ _lin {
 		1
 		return
 	}
@@ -1575,6 +1729,51 @@ SHIORI3FW.RequestLib
 
 	// 結果の解析
 
+#ifdef __AYA_SYSTEM_YAYA6__
+	// YAYA 600系：レスポンスの解析はPARSEHEADERでまとめて行う
+	_lin = _result[0, C_CRLF]
+
+	// プロトコル名と結果の取得
+	_seppos = STRSTR(_lin, ' ', 0)
+	if _seppos == -1; return
+	LIB.PROTOCOL   = SUBSTR(_lin, 0, _seppos)
+	LIB.STATUSCODE = SUBSTR(_lin, _seppos + 1, STRLEN(_lin) - _seppos - 1)
+
+	// レスポンスヘッダの取得
+	var.lib.result = ''
+
+	if SHIORI3FW.AUTO_DATA_CONVERT {
+		_res = PARSEHEADER(_result)
+		var.lib.key   = _res['key']
+		var.lib.value = IARRAY
+
+		_sz = ARRAYSIZE(var.lib.key)
+		for _i = 0; _i < _sz; _i++ {
+			_value   = _res['rawvalue'][_i]
+			_valuecv = ''
+			if ISINTSTR(_value)
+				_valuecv = TOINT(_value)
+			elseif ISREALSTR(_value)
+				_valuecv = TOREAL(_value)
+			else
+				_valuecv = REPLACE(_value, C_BYTE1, ',')
+
+			var.lib.value ,= _valuecv
+			if var.lib.key[_i] == 'Result' {
+				var.lib.result = _valuecv
+			}
+		}
+	}
+	else {
+		_res = PARSEHEADER(_result, 1) // TOAUTOEXと同じ変換
+		var.lib.key   = _res['key']
+		var.lib.value = _res['value']
+
+		if HASH_EXIST('Result', _res['header']) {
+			var.lib.result = _res['header']['Result']
+		}
+	}
+#else
 	// 改行で分割
 	_lines = RE_SPLIT(_result, C_CRLF)
 
@@ -1625,6 +1824,7 @@ SHIORI3FW.RequestLib
 			var.lib.result = _valuecv
 		}
 	}
+#endif
 }
 
 //------------------------------------------------------------------------------
@@ -1996,6 +2196,75 @@ SHIORI3EV.On_craftmanw
 SHIORI3EV.On_name
 {
 	GETSETTING('coreinfo.name')
+}
+
+//---- AIグラフ（getaistate）のフォールバック ------------------------------------
+// ゴースト側に On_getaistate が無い、または空を返したときに使われる。
+// システム辞書が持っている値だけで、次の6軸のレーダーチャートを作る。
+//   Boot       累計起動回数
+//   Uptime(h)  累計起動時間（時間）。前回までを表示値、今回の起動分を加算値にする
+//   Memory     保持している変数の数
+//   Repertoire 反応できるイベント（On で始まる関数）の数
+//   Talk/h     1時間あたりのランダムトークの回数（aitalkinterval から換算）
+//   Social     communicateratio（%）
+SHIORI3EV.On_getaistate
+{
+	_up_last = TOREAL(ghostupmin_last) / 60
+	_up_now  = TOREAL(ghostupmin) / 60
+	_talk    = 0
+	if aitalkinterval > 0 {
+		_talk = 3600 / aitalkinterval
+	}
+	_memory     = ARRAYSIZE(GETVARLIST())
+	_repertoire = ARRAYSIZE(GETFUNCLIST('On'))
+
+	_values = SHIORI3FW.AIGraphJoin(ghostuptimes, _up_last, _memory, _repertoire, _talk, communicateratio)
+	_labels = 'Boot,Uptime(h),Memory,Repertoire,Talk/h,Social'
+	_adds   = SHIORI3FW.AIGraphJoin(0, _up_now, 0, 0, 0, 0)
+	_max_boot   = SHIORI3FW.AIGraphMax(ghostuptimes)
+	_max_up     = SHIORI3FW.AIGraphMax(_up_last + _up_now)
+	_max_memory = SHIORI3FW.AIGraphMax(_memory)
+	_max_rep    = SHIORI3FW.AIGraphMax(_repertoire)
+	_max_talk   = SHIORI3FW.AIGraphMax(_talk)
+	_maxes      = SHIORI3FW.AIGraphJoin(_max_boot, _max_up, _max_memory, _max_rep, _max_talk, 100)
+
+	_values + C_BYTE1 + _labels + C_BYTE1 + _adds + C_BYTE1 + _maxes
+}
+
+//------------------------------------------------------------------------------
+//関数名：SHIORI3FW.AIGraphMax
+//機能　：AIグラフの最大値。値を収められる最小の 10, 20, 50, 100, 200, 500, ... を返す
+//引数　：_argv[0] 値
+//------------------------------------------------------------------------------
+SHIORI3FW.AIGraphMax
+{
+	_steps = (1, 2, 5)
+	_unit  = 10
+	while 1 {
+		foreach _steps ; _k {
+			if _unit * _k >= _argv[0] {
+				_unit * _k
+				return
+			}
+		}
+		_unit *= 10
+	}
+}
+
+//------------------------------------------------------------------------------
+//関数名：SHIORI3FW.AIGraphJoin
+//機能　：引数をカンマでつないだ文字列を返す
+//------------------------------------------------------------------------------
+SHIORI3FW.AIGraphJoin
+{
+	_result = ''
+	for _i = 0 ; _i < _argc ; _i++ {
+		if _i > 0 {
+			_result += ','
+		}
+		_result += TOSTR(_argv[_i])
+	}
+	_result
 }
 
 //---- tama対応 ------------------------------------------------------------------
