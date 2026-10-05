@@ -67,7 +67,10 @@ Menu_LASTTALK
 //---- トーク頻度の調整
 Menu_TALKINTERVAL
 {
-	'\0\s[0]どのくらいがええん？'
+	//---- 作業中の途中経過からも来るので、表情は DefaultSurface に任せる（作業中は歩いたまま）
+	DefaultSurface
+	--
+	'どのくらいがええん？'
 	--
 	AYATEMPLATE.MenuItem("うるさいくらい","Menu_TALKMAX",150)
 	--
@@ -77,7 +80,12 @@ Menu_TALKINTERVAL
 	--
 	AYATEMPLATE.MenuItem("黙ってて","Menu_TALKNONE")
 	--
-	AYATEMPLATE.MenuItem("戻る","OpenMenu",150)
+	if unyu_running {
+		AYATEMPLATE.MenuItem("戻る","UnyuProgressReport",150)
+	}
+	else {
+		AYATEMPLATE.MenuItem("戻る","OpenMenu",150)
+	}
 }
 
 //---- キャンセルされた
@@ -93,28 +101,28 @@ Menu_TALKMAX
 {
 	//---- うるさく話す(15秒間隔)
 	aitalkinterval = 15
-	'\0\s[0]ましんがんとーく、\w5やね。\w9\n具体的には１５秒間隔やで。\e'
+	DefaultSurface + 'ましんがんとーく、\w5やね。\w9\n具体的には１５秒間隔やで。\e'
 }
 
 Menu_TALKNORMAL
 {
 	//---- ふつうに話す(3分間隔)
 	aitalkinterval = 180
-	'\0\s[0]３分間隔やね。\e'
+	DefaultSurface + '３分間隔やね。\e'
 }
 
 Menu_TALKPOOR
 {
 	//---- 静かに話す(5分間隔)
 	aitalkinterval = 300
-	'\0\s[0]ほな、\w5静かにしとるで。\w9５分間隔やね。\e'
+	DefaultSurface + 'ほな、\w5静かにしとるで。\w9５分間隔やね。\e'
 }
 
 Menu_TALKNONE
 {
 	//---- 話さない
 	aitalkinterval = 0
-	'\0\s[0]し～ん。\e'
+	DefaultSurface + 'し～ん。\e'
 }
 
 //---- ヘッドライン

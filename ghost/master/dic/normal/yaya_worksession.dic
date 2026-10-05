@@ -695,6 +695,8 @@ UnyuProgressReport
 	AYATEMPLATE.MenuItem("まだ続ける","UnyuResume",200)
 	--
 	AYATEMPLATE.MenuItem("ここで辞める","UnyuAbort")
+	--
+	AYATEMPLATE.MenuItem("しゃべり頻度を変えて","Menu_TALKINTERVAL",150)
 }
 
 //------------------------------------------------------------------------------
