@@ -12,6 +12,9 @@ element0,overlay,surface0.png,0,0
 
 //当たり判定（待機時のみ）
 collisionex0,Unyu,region,region.png,174,182,241
+
+//顔サムネイル用座標定義
+icon.rect,215,305,285,375
 }
 
 surface1
@@ -31,6 +34,9 @@ animation0.pattern5,overlay,105,120,0,0
 animation0.pattern6,overlay,106,120,0,0
 animation0.pattern7,overlay,107,120,0,0
 animation0.pattern8,overlay,100,120,0,0
+
+//顔サムネイル用座標定義
+icon.rect,271,283,331,343
 }
 
 surface.append0-1
