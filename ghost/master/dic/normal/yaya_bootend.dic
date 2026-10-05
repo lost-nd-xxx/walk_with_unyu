@@ -17,6 +17,15 @@ OnSystemLoad.RemoveTempVar
 	ERASEVAR('unyu_nextnotice')
 	ERASEVAR('unyu_lasttick')
 	ERASEVAR('unyu_saidsave')
+	ERASEVAR('unyu_mode')
+	ERASEVAR('unyu_phase')
+	ERASEVAR('unyu_phasetick')
+	ERASEVAR('unyu_cycle')
+	ERASEVAR('unyu_cyclecount')
+	ERASEVAR('unyu_cyclebase')
+	ERASEVAR('unyu_worktotal')
+	ERASEVAR('unyu_breakmin')
+	ERASEVAR('unyu_breaksave')
 }
 
 //******************************************************************************
@@ -28,9 +37,6 @@ OnFirstBoot
 	//---- 変数の初期化
 	username         = 'ユーザさん'
 
-	//---- 作業セッションの変数を用意する
-	UnyuSessionInit
-
 	'\0\s[0]初めまして。\w9\nワイは作業応援うにゅうやで。\w9\n作業を始めるときは、\w5ワイをつついてな。\e'
 }
 
@@ -41,9 +47,6 @@ OnFirstBoot
 
 OnBoot
 {
-	//---- 作業セッションの変数を用意する
-	UnyuSessionInit
-
 	//---- まず双方のサーフィスを表示
 	'\1\s[10]\0\s[0]'
 	--

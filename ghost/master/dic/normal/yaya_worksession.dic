@@ -5,32 +5,122 @@
 // SSP のファイル監視（\![execute,filewatch]）と YAYA の FSIZE を使い、
 // 一定時間の作業を見守って、終わりに更新回数とファイルサイズの変化を報告する。
 //
-// 状態を持つグローバル変数（unyu_watchpath 以外は終了時に破棄する）
-//   unyu_watchpath  監視するファイルのパス。次回も使うので保存する
-//   unyu_running    走行中なら 1
+// 保存する変数（次回も使う設定）
+//   unyu_watchpath  監視するファイルのパス
+//   unyu_sound      効果音を鳴らすなら 1。最初は 0（鳴らさない）
+//   unyu_single_min 1 回だけのときの作業時間（分）。最初は 25
+//   unyu_pomo_work  ポモドーロの作業時間（分）
+//   unyu_pomo_break ポモドーロの休憩時間（分）
+//   unyu_pomo_long  ポモドーロの長い休憩（分）
+//   unyu_pomo_sets  長い休憩までの作業の回数
+//
+// 終了時に破棄する変数（ゴーストを終了したらセッションは残さない）
+//   unyu_running    走行中なら 1（ポモドーロでは休憩中も 1）
+//   unyu_mode       'single'（1 回だけ）か 'pomo'（ポモドーロ）
+//   unyu_phase      'work'（歩いている）、'break'（休憩中）、'wait'（休憩明けの確認待ち）
 //   unyu_starttick  開始時の GETTICKCOUNT（ミリ秒）
-//   unyu_limitmin   今回の作業時間（分）
+//   unyu_limitmin   今回の作業時間（分）。ポモドーロでは 1 回ぶんの作業時間
 //   unyu_basesize   開始時のファイルサイズ（バイト）。取れなければ -1
-//   unyu_count      監視中に数えた更新回数
-//   unyu_nextnotice 次に中間報告をする経過分
-//   unyu_lasttick   最後にファイルが変わった GETTICKCOUNT。まだ無ければ開始時刻
+//   unyu_count      監視中に数えた更新回数（休憩中の保存は数えない）
+//   unyu_nextnotice 次に中間報告をする経過分（1 回だけのときのみ）
+//   unyu_lasttick   最後にファイルが変わった GETTICKCOUNT。まだ無ければ作業を始めた時刻
 //   unyu_saidsave   保存忘れを言った後なら 1。次に保存されると 0 に戻る
+//   ---- ここからポモドーロだけで使う
+//   unyu_phasetick  今の作業または休憩を始めた GETTICKCOUNT
+//   unyu_cycle      何回目の作業か（1 から）
+//   unyu_cyclecount 今の作業で数えた更新回数
+//   unyu_cyclebase  今の作業を始めたときのファイルサイズ。取れなければ -1
+//   unyu_worktotal  終わった作業の合計（分）
+//   unyu_breakmin   今の休憩の長さ（分）
+//   unyu_breaksave  休憩中の保存。0 なし、1 見つけた（まだ言っていない）、2 言った
 //******************************************************************************
 
 //------------------------------------------------------------------------------
-// 一時変数の登録（終了時に自動で消える）
-// unyu_watchpath は登録しない＝保存される
+// 辞書を読み込むたびに（起動のほか、再読み込みでも）準備する
+// OnBoot は再読み込みでは来ないので、そこには置かない。
+// システム辞書の load は、一時変数の登録を空にしてから OnSystemLoad.* を名前順に呼ぶ。
+// OnSystemLoad.RemoveTempVar（前回の一時変数を消す）のほうが先に呼ばれる
+//------------------------------------------------------------------------------
+OnSystemLoad.UnyuSession
+{
+	UnyuSessionInit
+}
+
+//------------------------------------------------------------------------------
+// 一時変数の登録（終了時に自動で消える）と、保存する設定の初期値
+// 保存する変数は登録しない
 //------------------------------------------------------------------------------
 UnyuSessionInit
 {
-	SHIORI3FW.RegisterTempVar('unyu_running','unyu_starttick','unyu_limitmin','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave')
+	SHIORI3FW.RegisterTempVar('unyu_running','unyu_mode','unyu_phase','unyu_starttick','unyu_limitmin','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave','unyu_phasetick','unyu_cycle','unyu_cyclecount','unyu_cyclebase','unyu_worktotal','unyu_breakmin','unyu_breaksave')
 
 	if !ISVAR('unyu_running') {
 		unyu_running = 0
 	}
+	if !ISVAR('unyu_phase') {
+		unyu_phase = ''
+	}
 	if !ISVAR('unyu_watchpath') {
 		unyu_watchpath = ''
 	}
+	if !ISVAR('unyu_single_min') {
+		unyu_single_min = 25
+	}
+	if !ISVAR('unyu_sound') {
+		unyu_sound = 0
+	}
+	foreach ('work','break','long','sets') ; _key {
+		if !ISVAR('unyu_pomo_' + _key) {
+			LETTONAME('unyu_pomo_' + _key,UnyuPomoDefault(_key))
+		}
+	}
+}
+
+//------------------------------------------------------------------------------
+// 作業中（歩いている）なら 1。ポモドーロの休憩中は 0
+//------------------------------------------------------------------------------
+UnyuWalking
+{
+	unyu_running && unyu_phase == 'work'
+}
+
+//------------------------------------------------------------------------------
+// 走行中のダブルクリックと m キー。今の場面に合わせて振り分ける
+//------------------------------------------------------------------------------
+UnyuRunningMenu
+{
+	if unyu_phase == 'break' {
+		UnyuPomoBreakReport
+	}
+	elseif unyu_phase == 'wait' {
+		UnyuPomoNextAsk('休憩は、\w5もう終わっとるで。\w9\n')
+	}
+	else {
+		UnyuProgressReport
+	}
+}
+
+//******************************************************************************
+// 効果音
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// 効果音のタグ。鳴らさない設定なら空
+// _argv[0] は 'start'（歩き出すとき）か 'end'（作業が終わったとき）
+// \_v のパスは ghost/master からの相対。区切りは / にする（\ はタグになる）
+//------------------------------------------------------------------------------
+UnyuSound
+{
+	if !unyu_sound {
+		return ''
+	}
+	UnyuSoundTag(_argv[0])
+}
+
+//---- 設定に関わらず、その音を鳴らすタグ（試聴用）
+UnyuSoundTag
+{
+	"\_v[sound/sound_%(_argv[0]).wav]\![sound,wait]"
 }
 
 //******************************************************************************
@@ -38,52 +128,45 @@ UnyuSessionInit
 //******************************************************************************
 
 //---- _argv[0] に台詞を渡すと、最初の一言（「ほな、始めよか。」）の代わりにそれを言う
-//---- （パスを入力した後に、この画面へ戻ってくるとき用）
-//---- _argv[1] に 1 を渡すと、入力を受け付けなかった扱いにして、前のファイルに戻したと言う
-//---- 見ているファイル名を出すので、長い名前で折り返しても選択肢と重ならないよう、
-//---- 台詞を先に書いて、選択肢はその下に並べる
+//---- （入力や設定を変えた後に、この画面へ戻ってくるとき用）
+//---- 見るファイルと音は、ポモドーロの設定画面と同じく、今の値を選択肢そのものに出す
 UnyuWorkMenu
 {
 	//---- 時間はまだ選んでいない。前回のセッションの値を残さない
+	//---- unyu_mode は、入力の後にどちらの画面へ戻るかの目印にもなる（UnyuBackToSetup）
 	unyu_limitmin = 0
+	unyu_mode     = 'single'
 
-	'\0\s[0]'
+	'\0\s[0]\![quicksection,1]'
 	--
 	if _argc > 0 {
 		_argv[0]
 	}
 	else {
-		'ほな、\w5始めよか。'
+		'ほな、始めよか。'
 	}
 	--
-	'\w9\n'
+	//---- 選んである時間で始める。時間の選択肢は選ぶだけで、始めない
+	UnyuShortMenuItem("%(HAN2ZEN(unyu_single_min,'num'))分で始める","UnyuStartSingle",150)
 	--
-	if STRLEN(unyu_watchpath) > 0 {
-		if _argc > 1 && _argv[1] == 1 {
-			"見るファイルを「%(UnyuWatchFileName)」に戻したで。"
-		}
-		else {
-			"見るんは「%(UnyuWatchFileName)」やな。"
-		}
-	}
-	else {
-		'見るファイルは、\w5まだ決まっとらんな。'
-	}
+	UnyuShortMenuItem("ポモドーロでいく","UnyuPomoMenu",0)
 	--
-	'\w9\nどんくらい歩いたらええ？\![quicksection,1]'
+	//---- 時間は 2 列に並べる。選んである時間は太字にする
+	'\n[150]'
 	--
-	//---- 時間は 2 列に並べる
-	UnyuShortMenuItem("１５分","UnyuStart15",150)
+	UnyuTimeItem(15,'UnyuPick15')
 	--
-	UnyuShortMenuItem("２５分","UnyuStart25",0)
+	UnyuTimeItem(25,'UnyuPick25')
 	--
-	UnyuShortMenuItem("４５分","UnyuStart45",100)
+	UnyuTimeItem(45,'UnyuPick45')
 	--
-	UnyuShortMenuItem("６０分","UnyuStart60",0)
+	UnyuTimeItem(60,'UnyuPick60')
 	--
-	AYATEMPLATE.MenuItem("時間を自分で決める","UnyuAskMinutes")
+	AYATEMPLATE.MenuItem("時間を自分で決める","UnyuAskMinutes",100)
 	--
-	AYATEMPLATE.MenuItem("見るファイルを決める","UnyuAskPath",150)
+	UnyuSoundSetupItem(100)
+	--
+	UnyuWatchFileSetupItem
 	--
 	AYATEMPLATE.MenuItem("やっぱやめとく","UnyuCancelMenu",150)
 	--
@@ -93,9 +176,20 @@ UnyuWorkMenu
 //------------------------------------------------------------------------------
 // 横に並べる用の、幅の狭い選択肢（全角 10 字ぶん）
 // _argv[2] は改行の量。AYATEMPLATE.MenuItem と同じく 100 で 1 行、50 で半行、0 なら改行しない
+// _argv[3] は幅（半角 1・全角 2 の単位。省略すると 20）。0 なら幅をそろえない（右端の列用）
+// 幅より長い文字は MakeJustText に切り詰められるので、長くなりうる項目は右端に置いて 0 にする
 //------------------------------------------------------------------------------
 UnyuShortMenuItem
 {
+	_text  = _argv[0]
+	_width = 20
+	if _argc > 3 {
+		_width = _argv[3]
+	}
+	if _width > 0 {
+		_text = SHIORI3FW.MakeJustText(_text,_width)
+	}
+
 	_lftext   = ''
 	_linefeed = _argv[2]
 	while _linefeed > 0 {
@@ -108,22 +202,83 @@ UnyuShortMenuItem
 		_linefeed -= 100
 	}
 
-	_lftext + '\![*]\q[' + AYATEMPLATE.EscapeText(SHIORI3FW.MakeJustText(_argv[0],20)) + ',' + _argv[1] + ']'
+	_lftext + '\![*]\q[' + AYATEMPLATE.EscapeText(_text) + ',' + _argv[1] + ']'
 }
 
 //------------------------------------------------------------------------------
-// 見ているファイルの名前（フォルダを除く）
-// ファイル名に \ や % が入っていてもタグとして解釈されないようエスケープする
+// 作業準備画面とポモドーロの設定画面に共通の項目
+// どちらの画面から来たかは unyu_mode で見分ける（UnyuWorkMenu が 'single'、UnyuPomoMenu が 'pomo' にする）
+//------------------------------------------------------------------------------
+
+//---- 今いる設定の画面に、一言添えて戻す
+UnyuBackToSetup
+{
+	if unyu_mode == 'pomo' {
+		UnyuPomoMenu(_argv[0])
+	}
+	else {
+		UnyuWorkMenu(_argv[0])
+	}
+}
+
+//---- 音の項目。左に今の状態（選ぶたびに切り替わる）、右に「試聴」を並べる。_argv[0] は改行の量
+UnyuSoundSetupItem
+{
+	_label = '音: 鳴らさない'
+	if unyu_sound {
+		_label = '音: 鳴らす'
+	}
+
+	UnyuShortMenuItem(_label,"UnyuSetupSoundToggle",_argv[0])
+	--
+	UnyuShortMenuItem("試聴","UnyuSetupSoundPreview",0)
+}
+
+//---- メインメニューの「効果音を鳴らして」と同じ設定。切り替えるだけで、音は鳴らさない（聞くのは「試聴」）
+UnyuSetupSoundToggle
+{
+	unyu_sound = !unyu_sound
+
+	if unyu_sound {
+		UnyuBackToSetup('ほな、鳴らすで。')
+	}
+	else {
+		UnyuBackToSetup('ほな、音は止めとくわ。')
+	}
+}
+
+//---- 2 つの音を順に聞かせて、元の画面に戻す。鳴らす設定かどうかに関わらず鳴らす
+//---- \_V で鳴り終わるのを待ってから次へ進むので、選択肢は音が終わってから出る
+UnyuSetupSoundPreview
+{
+	UnyuBackToSetup('\![quicksection,0]歩き出すときはこれで、' + UnyuSoundTag('start') + '終わったときはこれや。' + UnyuSoundTag('end') + '\![quicksection,1]' )
+}
+
+//---- 見るファイルの項目。決まっていればその名前を出す
+//---- 長い名前でも MakeJustText に切り詰められないよう、幅はそろえない（UnyuShortMenuItem の幅 0）
+UnyuWatchFileSetupItem
+{
+	if STRLEN(unyu_watchpath) > 0 {
+		AYATEMPLATE.MenuItem("見るファイル: 「%(UnyuWatchFileName)」","UnyuAskPath",100)
+	}
+	else {
+		AYATEMPLATE.MenuItem("見るファイルを決める","UnyuAskPath",100)
+	}
+}
+
+//------------------------------------------------------------------------------
+// 見ているファイルの名前（フォルダを除く）。選択肢に出す用
+// 選択肢の文字は UnyuShortMenuItem が AYATEMPLATE.EscapeText で囲むので、ここではエスケープしない
 // 長すぎるときは、頭だけ残して「（略）」を付ける。幅は全角 1、半角 0.5 で数える
-//   名前（拡張子を除く）: 全角 16 文字ぶんを超えたら、14 文字ぶんまで縮める
-//   拡張子              : 基本的に省略しない。全角 8 文字ぶん（半角 16 文字）を超えたときだけ縮める
+// 「見るファイル: 「」」と合わせて、全角 24 文字ぶんくらいに収まるようにしている
+//   名前（拡張子を除く）: 全角 10 文字ぶんを超えたら、7 文字ぶんまで縮める
+//   拡張子              : 基本的に省略しない。全角 5 文字ぶん（半角 10 文字）を超えたときだけ縮める
 //------------------------------------------------------------------------------
 UnyuWatchFileName
 {
 	_parts = SPLITPATH(unyu_watchpath)
 
-	//---- 縮めた後でエスケープする（先にすると \\ などの途中で切れることがある）
-	SHIORI3FW.EscapeAllTags(UnyuShorten(_parts[2],16,14) + UnyuShorten(_parts[3],8,6))
+	UnyuShorten(_parts[2],10,7) + UnyuShorten(_parts[3],5,3)
 }
 
 //------------------------------------------------------------------------------
@@ -192,30 +347,55 @@ UnyuCharUnits
 	}
 }
 
-UnyuStart15
+//------------------------------------------------------------------------------
+// 時間の選択肢（2 列の 1 つぶん）。選んである時間なら太字にする
+// _argv[0] は分、_argv[1] は選んだときに呼ぶ関数
+//------------------------------------------------------------------------------
+UnyuTimeItem
 {
-	unyu_limitmin = 15
-	--
-	UnyuStartCheck
+	_label = HAN2ZEN(_argv[0],'num') + '分'
+	if _argv[0] == unyu_single_min {
+		_label = '\f[bold,1]' + _label + '\f[bold,default]'
+	}
+
+	"\![*]\__q[%(_argv[1])]%(_label)　　\__q"
 }
 
-UnyuStart25
+//---- 時間を選ぶ（始めはしない。「○○分で始める」で始める）
+UnyuPick15
 {
-	unyu_limitmin = 25
-	--
-	UnyuStartCheck
+	UnyuPickMinutes(15)
 }
 
-UnyuStart45
+UnyuPick25
 {
-	unyu_limitmin = 45
-	--
-	UnyuStartCheck
+	UnyuPickMinutes(25)
 }
 
-UnyuStart60
+UnyuPick45
 {
-	unyu_limitmin = 60
+	UnyuPickMinutes(45)
+}
+
+UnyuPick60
+{
+	UnyuPickMinutes(60)
+}
+
+UnyuPickMinutes
+{
+	unyu_single_min = _argv[0]
+	--
+	UnyuWorkMenu("ほな、%(HAN2ZEN(_argv[0],'num'))分にしよか。")
+}
+
+//------------------------------------------------------------------------------
+// 選んである時間で始める
+//------------------------------------------------------------------------------
+UnyuStartSingle
+{
+	unyu_mode     = 'single'
+	unyu_limitmin = unyu_single_min
 	--
 	UnyuStartCheck
 }
@@ -230,7 +410,7 @@ UnyuAskMinutes
 	--
 	'何分歩いたらええ？\w9\n数字で教えてな。\w9\n（５〜１２０分）'
 	--
-	'\![open,inputbox,OnUnyuSetMinutes,0]'
+	"\![open,inputbox,OnUnyuSetMinutes,0,%(unyu_single_min)]"
 	--
 	'\e'
 }
@@ -250,17 +430,18 @@ OnUnyuSetMinutes
 
 	_min = TOINT(_text)
 	if _min < 5 {
-		UnyuWorkMenu('それやと短すぎるわ。\w9\n５分からにしといてな。')
+		UnyuWorkMenu('それやと短すぎるわ。\n５分からにしといてな。')
 		return
 	}
 	if _min > 120 {
-		UnyuWorkMenu('そんな長いこと歩かれへんわ。\w9\n１２０分までにしといてな。')
+		UnyuWorkMenu('そんな長いこと歩かれへんわ。\n１２０分までにしといてな。')
 		return
 	}
 
-	unyu_limitmin = _min
+	//---- 選ぶだけで、始めない（「○○分で始める」で始める）
+	unyu_single_min = _min
 	--
-	UnyuStartCheck
+	UnyuWorkMenu("%(HAN2ZEN(_min,'num'))分やな。")
 }
 
 UnyuCancelMenu
@@ -274,8 +455,13 @@ UnyuCancelMenu
 //------------------------------------------------------------------------------
 UnyuStartCheck
 {
-	if STRLEN(unyu_watchpath) > 0 {
+	if UnyuWatchPathExists {
 		UnyuStartSession
+	}
+	elseif STRLEN(unyu_watchpath) > 0 {
+		//---- 決めてあったファイルが、移動や削除で無くなっている。未設定に戻して聞き直す
+		unyu_watchpath = ''
+		UnyuAskPath('前に見とったファイル、\w5見当たらんようになっとるわ。\w9\n')
 	}
 	else {
 		UnyuAskPath
@@ -283,12 +469,25 @@ UnyuStartCheck
 }
 
 //------------------------------------------------------------------------------
+// 見るファイルが決まっていて、今も実在するなら 1。FSIZE は失敗すると -1 を返す
+//------------------------------------------------------------------------------
+UnyuWatchPathExists
+{
+	STRLEN(unyu_watchpath) > 0 && FSIZE(unyu_watchpath) >= 0
+}
+
+//------------------------------------------------------------------------------
 // 監視するファイルを尋ねる
 // ID を On で始めると、その名前のイベントが直接発生する
+// _argv[0] に台詞を渡すと、問いかけの前に言う
 //------------------------------------------------------------------------------
 UnyuAskPath
 {
 	'\0\s[0]\![set,balloontimeout,0]'
+	--
+	if _argc > 0 {
+		_argv[0]
+	}
 	--
 	'どのファイルを見とけばええ？\w9\nフルパスで教えてな。'
 	--
@@ -303,28 +502,40 @@ OnUnyuSetPath
 	//---- reference[0] が入力内容（OnUserInput の reference[1] にあたる）
 	_path = reference[0]
 
-	//---- うまくいかなかったときは、一言添えて作業準備画面に戻す
+	//---- うまくいかなかったときは、一言添えて元の画面（作業準備かポモドーロの設定）に戻す
+	//---- 打ち間違いで前の設定まで失わないよう、前のファイルがまだあるなら unyu_watchpath は変えない
+	//---- 前のファイルも無くなっていたら、未設定に戻す（見られないファイルを残しておいても使えない）
+	_keep = ''
+	if STRLEN(_path) < 1 || FSIZE(_path) < 0 {
+		if UnyuWatchPathExists {
+			_keep = '\w9\n前のファイルのままにしとくで。'
+		}
+		elseif STRLEN(unyu_watchpath) > 0 {
+			unyu_watchpath = ''
+			_keep = '\w9\n前のファイルも見当たらんから、\w5決め直してな。'
+		}
+	}
+
 	if STRLEN(_path) < 1 {
-		UnyuWorkMenu('なんも入っとらんかったわ。',1)
+		UnyuBackToSetup('なんも入っとらんかったわ。' + _keep)
 		return
 	}
 
 	//---- 実在するか確かめる。FSIZE は失敗すると -1 を返す
-	//---- 打ち間違いで前の設定まで失わないよう、unyu_watchpath は変えない
 	if FSIZE(_path) < 0 {
-		UnyuWorkMenu('そのファイル、\w5見つからんかったわ。',1)
+		UnyuBackToSetup('そのファイル、\w5見つからんかったわ。' + _keep)
 		return
 	}
 
 	unyu_watchpath = _path
 
 	//---- 時間を選んだ後に聞いたのなら、そのまま始める
-	//---- 「見るファイルを変える」から来たのなら、作業準備画面に戻す
+	//---- 「見るファイル」の項目から来たのなら、元の画面に戻す
 	if unyu_limitmin > 0 {
 		UnyuStartSession
 	}
 	else {
-		UnyuWorkMenu('覚えたで。')
+		UnyuBackToSetup('覚えたで。')
 	}
 }
 
@@ -341,10 +552,23 @@ OnUserInputCancel
 		return
 	}
 
+	//---- ポモドーロの設定の入力をやめたときは、設定の画面に戻す
+	if SUBSTR(reference[0],0,13) == 'OnUnyuSetPomo' {
+		UnyuPomoMenu('ほな、\w5そのままにしとくで。')
+		return
+	}
+
 	if reference[0] != 'OnUnyuSetPath' {
 		return
 	}
 
+	//---- 「見るファイル」の項目から来たのなら、元の画面に戻す
+	if unyu_limitmin <= 0 {
+		UnyuBackToSetup('ほな、\w5そのままにしとくで。')
+		return
+	}
+
+	//---- 始めようとしてファイルを聞いたところでやめたのなら、ここで終わる
 	unyu_limitmin = 0
 
 	'\0\s[0]ええよ、また今度で。\e'
@@ -356,10 +580,17 @@ OnUserInputCancel
 
 UnyuStartSession
 {
+	if unyu_mode == 'pomo' {
+		UnyuPomoStart
+		return
+	}
+
 	if unyu_limitmin <= 0 {
 		unyu_limitmin = 25
 	}
 
+	unyu_mode       = 'single'
+	unyu_phase      = 'work'
 	unyu_basesize   = FSIZE(unyu_watchpath)
 	unyu_count      = 0
 	unyu_starttick  = GETTICKCOUNT
@@ -368,8 +599,16 @@ UnyuStartSession
 	unyu_running    = 1
 	unyu_nextnotice = UnyuNoticeStep
 
-	"\0\s[1]ほな、%(unyu_limitmin)分な。\w9\n%(username)も頑張りや。/
-	\![execute,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath)),--async=OnUnyuFileChange]\e"
+	"\0\s[1]%(UnyuSound('start'))ほな、%(HAN2ZEN(unyu_limitmin,'num'))分な。\w9\n%(username)も頑張りや。/
+	%(UnyuFileWatchStart)\e"
+}
+
+//------------------------------------------------------------------------------
+// ファイル監視を始めるタグ
+//------------------------------------------------------------------------------
+UnyuFileWatchStart
+{
+	"\![execute,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath)),--async=OnUnyuFileChange]"
 }
 
 //------------------------------------------------------------------------------
@@ -403,15 +642,27 @@ OnUnyuFileChange
 		return
 	}
 
-	if reference[2] == 'modified' || reference[2] == 'created' {
-		unyu_count    = unyu_count + 1
-		unyu_lasttick = GETTICKCOUNT
+	if reference[2] != 'modified' && reference[2] != 'created' {
+		return
+	}
+
+	if unyu_phase == 'work' {
+		unyu_count      = unyu_count + 1
+		unyu_cyclecount = unyu_cyclecount + 1
+		unyu_lasttick   = GETTICKCOUNT
 
 		//---- 保存されたので、また心配できるように戻す
 		unyu_saidsave = 0
 	}
+	elseif unyu_phase == 'break' {
+		//---- 休憩中の保存は数えない。軽くつっこむのは UnyuTick に任せる
+		//---- （ここで喋ると、選択肢を出している最中に割り込むことがある）
+		if unyu_breaksave == 0 {
+			unyu_breaksave = 1
+		}
+	}
 
-	//---- 作業中は黙って数える
+	//---- ここでは喋らない
 	''
 }
 
@@ -451,6 +702,11 @@ UnyuTick
 	//---- reference[3] はトークを再生できるときに 1、できないときは 0（UKADOC）
 	//---- 再生できないときに返したスクリプトは無視されるので、何もせずに返る
 	if reference[3] != '1' {
+		return
+	}
+
+	if unyu_mode == 'pomo' {
+		UnyuPomoTick
 		return
 	}
 
@@ -618,6 +874,8 @@ UnyuFinish
 	--
 	'\0\s[0]'
 	--
+	UnyuSound('end')
+	--
 	UnyuFinishNotice
 	--
 	UnyuReportTalk(_min,_count,_diff)
@@ -670,8 +928,16 @@ UnyuReportTalk
 UnyuProgressReport
 {
 	_min   = UnyuElapsedMin
-	_rest  = unyu_limitmin - _min
+	_count = unyu_count
 	_diff  = UnyuDiffByte
+
+	//---- ポモドーロでは、今の 1 回ぶんの様子を伝える
+	if unyu_mode == 'pomo' {
+		_min   = UnyuPhaseMin
+		_count = unyu_cyclecount
+		_diff  = UnyuCycleDiffByte
+	}
+	_rest = unyu_limitmin - _min
 
 	if _rest < 0 {
 		_rest = 0
@@ -679,17 +945,21 @@ UnyuProgressReport
 
 	'\0\s[1]'
 	--
-	if unyu_count <= 0 {
+	if unyu_mode == 'pomo' {
+		"%(HAN2ZEN(unyu_cycle,'num'))回目の途中や。\w9\n"
+	}
+	--
+	if _count <= 0 {
 		"今んとこ%(HAN2ZEN(_min,'num'))分、\w5更新はまだやな。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	elseif _diff > 0 {
-		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))増えとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(_count,'num'))回、\w5%(UnyuSizeText(_diff))増えとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	elseif _diff < 0 {
-		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))減っとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(_count,'num'))回、\w5%(UnyuSizeText(_diff))減っとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	else {
-		"今んとこ%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(unyu_count,'num'))回の更新や。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新や。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	--
 	AYATEMPLATE.MenuItem("まだ続ける","UnyuResume",200)
@@ -714,6 +984,11 @@ UnyuResume
 //------------------------------------------------------------------------------
 UnyuAbort
 {
+	if unyu_mode == 'pomo' {
+		UnyuPomoQuit
+		return
+	}
+
 	_min   = UnyuElapsedMin
 	_count = unyu_count
 
@@ -775,4 +1050,560 @@ UnyuWorkTalk : nonoverlap
 	'時計見るより、\w5ワイ見とったほうが早いで。\w9\n…\w5…\w5嘘やけど。'
 	--
 	'\e'
+}
+
+//******************************************************************************
+// ポモドーロ
+//
+// 作業 → 休憩 → （確認） → 作業 → … を、ユーザーが終わると言うまで繰り返す。
+// unyu_pomo_sets 回ごとに、休憩が長くなる。
+// 休憩が明けたら勝手に歩き出さず、選択肢で確かめる（席を外しているかもしれないので）。
+// 選択肢が消えても、ダブルクリック（UnyuRunningMenu）で同じ場面に戻れる。
+// ゴーストを終了すると、変数ごとセッションは消える。
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// 設定の表（_argv[0] は 'work' / 'break' / 'long' / 'sets'）
+//------------------------------------------------------------------------------
+
+//---- 定番の値。最初の設定と、空っぽで入力されたときに使う
+UnyuPomoDefault
+{
+	case _argv[0] {
+		when 'work'  { 25 }
+		when 'break' { 5 }
+		when 'long'  { 15 }
+		others       { 4 }
+	}
+}
+
+//---- 受け付ける範囲
+UnyuPomoLow
+{
+	case _argv[0] {
+		when 'work'  { 5 }
+		when 'sets'  { 2 }
+		others       { 1 }
+	}
+}
+
+UnyuPomoHigh
+{
+	case _argv[0] {
+		when 'work'  { 120 }
+		when 'break' { 30 }
+		when 'long'  { 60 }
+		others       { 10 }
+	}
+}
+
+UnyuPomoUnit
+{
+	if _argv[0] == 'sets' {
+		'回'
+	}
+	else {
+		'分'
+	}
+}
+
+UnyuPomoLabel
+{
+	case _argv[0] {
+		when 'work'  { '作業の時間' }
+		when 'break' { '休憩の時間' }
+		when 'long'  { '長い休憩' }
+		others       { '長い休憩までの回数' }
+	}
+}
+
+UnyuPomoValue
+{
+	case _argv[0] {
+		when 'work'  { unyu_pomo_work }
+		when 'break' { unyu_pomo_break }
+		when 'long'  { unyu_pomo_long }
+		others       { unyu_pomo_sets }
+	}
+}
+
+//------------------------------------------------------------------------------
+// 設定の画面（作業準備画面の「ポモドーロでいく」から）
+// _argv[0] に台詞を渡すと、最初の一言の代わりにそれを言う（末尾に \n を付けない）
+// 設定の値は選択肢そのものに出し、選ぶとその値を変えられる
+//   作業 / 休憩           （1 行目、2 列）
+//   長い休憩 / 回数       （2 行目、2 列。回数は長いので右端に置き、幅をそろえない）
+//   音                    （3 行目。選ぶたびに切り替わる）
+//   見るファイル          （4 行目）
+//------------------------------------------------------------------------------
+UnyuPomoMenu
+{
+	//---- まだ始めていない。unyu_mode は入力の後に戻る画面の目印（UnyuBackToSetup）
+	//---- unyu_limitmin を 0 にしておかないと、ファイルを決めた直後に始まってしまう（OnUnyuSetPath）
+	unyu_limitmin = 0
+	unyu_mode     = 'pomo'
+
+	'\0\s[0]\![quicksection,1]'
+	--
+	if _argc > 0 {
+		_argv[0]
+	}
+	else {
+		'ポモドーロやな。'
+	}
+	--
+	UnyuShortMenuItem("この設定で始める","UnyuPomoGo",150)
+	--
+	UnyuShortMenuItem("普通の設定に戻す","UnyuPomoBack",0)
+	--
+	UnyuShortMenuItem("作業: %(HAN2ZEN(unyu_pomo_work,'num'))分","UnyuPomoAskWork",150)
+	--
+	UnyuShortMenuItem("休憩: %(HAN2ZEN(unyu_pomo_break,'num'))分","UnyuPomoAskBreak",0)
+	--
+	UnyuShortMenuItem("長い休憩: %(HAN2ZEN(unyu_pomo_long,'num'))分","UnyuPomoAskLong",100)
+	--
+	UnyuShortMenuItem("長い休憩までの作業: %(HAN2ZEN(unyu_pomo_sets,'num'))回","UnyuPomoAskSets",0,0)
+	--
+	UnyuSoundSetupItem(100)
+	--
+	UnyuWatchFileSetupItem
+	--
+	AYATEMPLATE.MenuItem("やっぱやめとく","UnyuCancelMenu",150)
+	--
+	'\![quicksection,0]\e'
+}
+
+//------------------------------------------------------------------------------
+// 作業準備画面に戻る（「ほな、始めよか。」だと、もう始めかけていたので合わない）
+//------------------------------------------------------------------------------
+UnyuPomoBack
+{
+	UnyuWorkMenu(UnyuPomoBackTalk)
+}
+
+UnyuPomoBackTalk : nonoverlap
+{
+	'ほな、ふつうに歩こか。'
+	'ポモドーロは、また今度やな。'
+}
+
+UnyuPomoGo
+{
+	unyu_mode     = 'pomo'
+	unyu_limitmin = unyu_pomo_work
+	--
+	UnyuStartCheck
+}
+
+//------------------------------------------------------------------------------
+// 設定の入力
+// ID を On で始めると、その名前のイベントが直接発生する（Reference は一つ前にずれる）
+//------------------------------------------------------------------------------
+UnyuPomoAskWork
+{
+	UnyuPomoAskValue('work','OnUnyuSetPomoWork')
+}
+
+UnyuPomoAskBreak
+{
+	UnyuPomoAskValue('break','OnUnyuSetPomoBreak')
+}
+
+UnyuPomoAskLong
+{
+	UnyuPomoAskValue('long','OnUnyuSetPomoLong')
+}
+
+UnyuPomoAskSets
+{
+	UnyuPomoAskValue('sets','OnUnyuSetPomoSets')
+}
+
+//---- _argv[0] は設定の名前、_argv[1] は入力ボックスの ID
+UnyuPomoAskValue
+{
+	_key  = _argv[0]
+	_unit = UnyuPomoUnit(_key)
+
+	'\0\s[0]\![set,balloontimeout,0]'
+	--
+	"%(UnyuPomoLabel(_key))は、\w5どうする？\w9\n数字で教えてな。\w9\n/
+	（%(HAN2ZEN(UnyuPomoLow(_key),'num'))〜%(HAN2ZEN(UnyuPomoHigh(_key),'num'))%(_unit)。\w5/
+	空っぽなら%(HAN2ZEN(UnyuPomoDefault(_key),'num'))%(_unit)）"
+	--
+	"\![open,inputbox,%(_argv[1]),0,%(UnyuPomoValue(_key))]"
+	--
+	'\e'
+}
+
+OnUnyuSetPomoWork
+{
+	UnyuPomoSetValue('work',reference[0])
+}
+
+OnUnyuSetPomoBreak
+{
+	UnyuPomoSetValue('break',reference[0])
+}
+
+OnUnyuSetPomoLong
+{
+	UnyuPomoSetValue('long',reference[0])
+}
+
+OnUnyuSetPomoSets
+{
+	UnyuPomoSetValue('sets',reference[0])
+}
+
+//------------------------------------------------------------------------------
+// 入力を受け取って、設定の画面に戻す
+//   空っぽ          → 定番の値にする
+//   数字でない      → 変えない
+//   範囲の外        → 変えない（範囲を伝える）
+// 全角の数字や「分」「回」、空白が付いていても受け付ける
+//------------------------------------------------------------------------------
+UnyuPomoSetValue
+{
+	_key   = _argv[0]
+	_unit  = UnyuPomoUnit(_key)
+	_label = UnyuPomoLabel(_key)
+	_low   = UnyuPomoLow(_key)
+	_high  = UnyuPomoHigh(_key)
+
+	_text = ZEN2HAN(_argv[1])
+	_text = REPLACE(_text,_unit,'')
+	_text = REPLACE(_text,' ','')
+	_text = REPLACE(_text,'　','')
+
+	//---- ローカル変数は { } の中で作るとその外で消えるので、先に作っておく
+	_value = 0
+	_talk  = ''
+
+	if STRLEN(_text) == 0 {
+		_value = UnyuPomoDefault(_key)
+		_talk  = "空っぽやったから、\w5定番の%(HAN2ZEN(_value,'num'))%(_unit)にしといたで。"
+	}
+	elseif !ISINTSTR(_text) {
+		return UnyuPomoMenu('数字で頼むわ。')
+	}
+	else {
+		_value = TOINT(_text)
+		if _value < _low || _value > _high {
+			return UnyuPomoMenu("それはちょっと無理やな。\w9\n%(_label)は、\w5%(HAN2ZEN(_low,'num'))〜%(HAN2ZEN(_high,'num'))%(_unit)にしといてな。")
+		}
+		_talk = "%(_label)を%(HAN2ZEN(_value,'num'))%(_unit)にしたで。"
+	}
+
+	LETTONAME('unyu_pomo_' + _key,_value)
+	--
+	UnyuPomoMenu(_talk)
+}
+
+//------------------------------------------------------------------------------
+// 始める（UnyuStartSession から。監視するファイルは決まっている）
+//------------------------------------------------------------------------------
+UnyuPomoStart
+{
+	unyu_running   = 1
+	unyu_mode      = 'pomo'
+	unyu_limitmin  = unyu_pomo_work
+	unyu_basesize  = FSIZE(unyu_watchpath)
+	unyu_count     = 0
+	unyu_starttick = GETTICKCOUNT
+	unyu_cycle     = 1
+	unyu_worktotal = 0
+	--
+	UnyuPomoBeginWork("ほな、\w5ポモドーロでいこか。\w9\n%(HAN2ZEN(unyu_limitmin,'num'))分歩いたら、\w5休憩や。\w9\n%(username)も頑張りや。")
+	--
+	UnyuFileWatchStart
+	--
+	'\e'
+}
+
+//------------------------------------------------------------------------------
+// 次の作業に入る（休憩明けの「次いこか」、休憩中の「休憩を切り上げる」から）
+//------------------------------------------------------------------------------
+UnyuPomoNext
+{
+	//---- 古い選択肢を押されたときは、何もしない
+	if !unyu_running || unyu_phase == 'work' {
+		return ''
+	}
+
+	unyu_cycle += 1
+	--
+	UnyuPomoBeginWork(UnyuPomoNextTalk)
+	--
+	'\e'
+}
+
+UnyuPomoNextTalk : nonoverlap
+{
+	"ほな、\w5%(HAN2ZEN(unyu_cycle,'num'))回目いこか。\w9\n%(HAN2ZEN(unyu_limitmin,'num'))分な。"
+	"よっしゃ、\w5%(HAN2ZEN(unyu_cycle,'num'))回目や。\w9\nまた歩くで。"
+	"%(HAN2ZEN(unyu_cycle,'num'))回目、\w5始めよか。\w9\nぼちぼちいこ。"
+}
+
+//------------------------------------------------------------------------------
+// 作業を始める。変数を整えて、歩き出しのスクリプトを返す
+// _argv[0] は歩き出すときの台詞
+//------------------------------------------------------------------------------
+UnyuPomoBeginWork
+{
+	unyu_phase      = 'work'
+	unyu_phasetick  = GETTICKCOUNT
+	unyu_lasttick   = GETTICKCOUNT
+	unyu_saidsave   = 0
+	unyu_cyclecount = 0
+	unyu_cyclebase  = FSIZE(unyu_watchpath)
+
+	'\0\s[1]' + UnyuSound('start') + _argv[0]
+}
+
+//------------------------------------------------------------------------------
+// 今の作業または休憩に入ってからの分数
+//------------------------------------------------------------------------------
+UnyuPhaseMin
+{
+	(GETTICKCOUNT - unyu_phasetick) / 60000
+}
+
+//------------------------------------------------------------------------------
+// 今の作業でのファイルサイズの変化（バイト）。取れないときは 0
+//------------------------------------------------------------------------------
+UnyuCycleDiffByte
+{
+	_now = FSIZE(unyu_watchpath)
+
+	if _now < 0 || unyu_cyclebase < 0 {
+		return 0
+	}
+
+	_now - unyu_cyclebase
+}
+
+//------------------------------------------------------------------------------
+// 時間の見張り（UnyuTick から。喋れるときだけ呼ばれる）
+//------------------------------------------------------------------------------
+UnyuPomoTick
+{
+	_min = UnyuPhaseMin
+
+	if unyu_phase == 'work' {
+		if _min >= unyu_limitmin {
+			UnyuPomoWorkEnd
+			return
+		}
+
+		//---- 保存忘れの心配。1 回だけのときと同じ。今の作業で一度も保存していなければ言わない
+		if unyu_cyclecount > 0 && !unyu_saidsave && UnyuSilentMin >= UnyuSilentLimit {
+			unyu_saidsave = 1
+			UnyuSaveReminderTalk(UnyuSilentMin)
+		}
+	}
+	elseif unyu_phase == 'break' {
+		if _min >= unyu_breakmin {
+			unyu_phase = 'wait'
+			UnyuPomoNextAsk(UnyuBreakEndNotice)
+			return
+		}
+
+		//---- 休憩中に保存されていたら、一度だけ軽くつっこむ
+		if unyu_breaksave == 1 {
+			unyu_breaksave = 2
+			UnyuBreakSaveTalk
+		}
+	}
+	//---- 'wait' は返事を待っているだけ
+}
+
+//------------------------------------------------------------------------------
+// 1 回ぶんの作業が終わった。休憩に入る
+//------------------------------------------------------------------------------
+UnyuPomoWorkEnd
+{
+	_cycle = unyu_cycle
+	_count = unyu_cyclecount
+	_diff  = UnyuCycleDiffByte
+	_long  = (_cycle % unyu_pomo_sets == 0)
+
+	unyu_worktotal += unyu_limitmin
+	if _long {
+		unyu_breakmin = unyu_pomo_long
+	}
+	else {
+		unyu_breakmin = unyu_pomo_break
+	}
+	unyu_phase     = 'break'
+	unyu_phasetick = GETTICKCOUNT
+	unyu_breaksave = 0
+
+	'\0\s[0]'
+	--
+	UnyuSound('end')
+	--
+	"%(HAN2ZEN(_cycle,'num'))回目、\w5おしまいや。\w9\n"
+	--
+	if _count <= 0 {
+		'更新はなかったけど、\w5考えとった時間も作業のうちや。\w9\n'
+	}
+	elseif _diff > 0 {
+		"更新%(HAN2ZEN(_count,'num'))回、\w5%(UnyuSizeText(_diff))増えたで。\w9\n"
+	}
+	elseif _diff < 0 {
+		"更新%(HAN2ZEN(_count,'num'))回、\w5%(UnyuSizeText(_diff))減ったで。\w9\n"
+	}
+	else {
+		"更新%(HAN2ZEN(_count,'num'))回、\w5サイズはそのままや。\w9\n"
+	}
+	--
+	if _long {
+		"ここまで%(HAN2ZEN(_cycle,'num'))回、\w5ようやったな。\w9\n長めに%(HAN2ZEN(unyu_breakmin,'num'))分、\w5休も。\e"
+	}
+	else {
+		"ほな、\w5%(HAN2ZEN(unyu_breakmin,'num'))分休憩や。\e"
+		"%(HAN2ZEN(unyu_breakmin,'num'))分、\w5ひと休みしよか。\e"
+	}
+}
+
+//------------------------------------------------------------------------------
+// 休憩が明けた（UnyuPomoNextAsk の頭に付ける）
+//------------------------------------------------------------------------------
+UnyuBreakEndNotice : nonoverlap
+{
+	'休憩、\w5終わりやで。\w9\n'
+	'はい、\w5休憩おしまいや。\w9\n'
+	'そろそろ、\w5ええ頃やな。\w9\n'
+}
+
+//------------------------------------------------------------------------------
+// 休憩明けの確認。次へ行くか、ここで終わるか
+// 選択肢が消えても、ダブルクリックでここへ戻る（UnyuRunningMenu）
+// _argv[0] は最初の一言
+//------------------------------------------------------------------------------
+UnyuPomoNextAsk
+{
+	_next = unyu_cycle + 1
+
+	'\0\s[0]'
+	--
+	_argv[0]
+	--
+	"次は%(HAN2ZEN(_next,'num'))回目やな。\w9\nいけそうか？"
+	--
+	AYATEMPLATE.MenuItem("次いこか","UnyuPomoNext",200)
+	--
+	AYATEMPLATE.MenuItem("ここで終わる","UnyuPomoQuit")
+	--
+	'\e'
+}
+
+//------------------------------------------------------------------------------
+// 休憩中のダブルクリック
+//------------------------------------------------------------------------------
+UnyuPomoBreakReport
+{
+	_rest = unyu_breakmin - UnyuPhaseMin
+
+	if _rest < 1 {
+		_rest = 1
+	}
+
+	'\0\s[0]'
+	--
+	"休憩中やで。\w9\nあと%(HAN2ZEN(_rest,'num'))分くらいや。"
+	--
+	AYATEMPLATE.MenuItem("まだ休む","UnyuPomoKeepBreak",200)
+	--
+	AYATEMPLATE.MenuItem("休憩を切り上げる","UnyuPomoNext")
+	--
+	AYATEMPLATE.MenuItem("ここで終わる","UnyuPomoQuit")
+	--
+	AYATEMPLATE.MenuItem("しゃべり頻度を変えて","Menu_TALKINTERVAL",150)
+	--
+	'\e'
+}
+
+UnyuPomoKeepBreak
+{
+	'\0\s[0]せやな、\w5ゆっくりしとき。\e'
+	'\0\s[0]おう。\w9\n時間になったら呼ぶわ。\e'
+}
+
+//------------------------------------------------------------------------------
+// 休憩中に保存されたときのつっこみ（エディタの自動保存かもしれないので軽く）
+//------------------------------------------------------------------------------
+UnyuBreakSaveTalk
+{
+	'\0\s[0]ん、\w5今ファイル動いたな？\w9\n自動保存やったらええけど、\w5休憩中やで。\e'
+	'\0\s[0]休憩中に保存しとらんか？\w9\n…\w5…\w5まあ、\w5勝手に保存されることもあるわな。\e'
+	'\0\s[0]休むときは休むんやで。\w9\n…\w5…\w5自動保存やったら、\w5堪忍な。\e'
+}
+
+//------------------------------------------------------------------------------
+// ここで終わる。全部の合計を報告する
+// 休憩中の保存は回数に入らないが、サイズの差には入る（開始時と今の差なので）
+//------------------------------------------------------------------------------
+UnyuPomoQuit
+{
+	//---- 古い選択肢を押されたときは、何もしない
+	if !unyu_running {
+		return ''
+	}
+
+	_min  = unyu_worktotal
+	_done = unyu_cycle
+	if unyu_phase == 'work' {
+		_min  += UnyuPhaseMin
+		_done -= 1
+	}
+	_count = unyu_count
+	_diff  = UnyuDiffByte
+
+	unyu_running = 0
+	unyu_phase   = ''
+
+	"\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath))]"
+	--
+	'\0\s[0]'
+	--
+	if _min <= 0 {
+		'まだ始まったばっかりやったな。\w9\nまた気が向いたら呼んでな。\e'
+	}
+	elseif _done > 0 {
+		"%(HAN2ZEN(_done,'num'))回ぶん、\w5歩いたで。\w9\n"
+		--
+		UnyuReportTalk(_min,_count,_diff)
+	}
+	else {
+		UnyuReportTalk(_min,_count,_diff)
+	}
+}
+
+//------------------------------------------------------------------------------
+// 休憩中のランダムトーク（座って休んでいる）
+// 作業中と同じく、状況を断定する台詞は書かない
+//------------------------------------------------------------------------------
+UnyuBreakTalk : nonoverlap
+{
+	'\0\s[0]'
+	--
+	'ワイも座って休んどるで。\w9\n足、\w5ちょっと伸ばしとこ。'
+	'休憩中は、\w5画面から目ぇ離しとき。'
+	'水でも飲んどき。\w9\nワイはもう飲んだで。'
+	'立って伸びでもしとき。\w9\nちょっとだけでもちゃうで。'
+	'カラカラいわんと、\w5静かやな。'
+	'休むのも、\w5作業のうちやで。'
+	--
+	'\e'
+}
+
+//------------------------------------------------------------------------------
+// 休憩明けの確認を待っているときのランダムトーク
+//------------------------------------------------------------------------------
+UnyuWaitTalk
+{
+	'\0\s[0]休憩、\w5終わっとるで。\w9\nワイをダブルクリックしたら、\w5続きいけるで。\e'
+	'\0\s[0]まだ休んどるんか？\w9\nええけど、\w5いけそうならワイをダブルクリックしてな。\e'
 }

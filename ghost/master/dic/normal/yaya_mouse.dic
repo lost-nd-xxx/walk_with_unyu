@@ -91,9 +91,9 @@ MouseMove0Unyu : nonoverlap
 //本体側のつつかれ反応
 MouseDoubleClick0
 {
-	//作業中なら途中報告、待機中なら作業を始めるか尋ねる
+	//作業中なら途中報告（ポモドーロの休憩中と休憩明けはそれぞれの場面）、待機中なら作業を始めるか尋ねる
 	if unyu_running {
-		UnyuProgressReport
+		UnyuRunningMenu
 	}
 	else {
 		OpenMenu

@@ -65,6 +65,10 @@
 * change by : ukiya
 * modernized by : ponapalt and contributors
 
+**効果音**
+
+`ghost/master/sound/` の効果音は、ChipTone（ https://sfbgames.itch.io/chiptone ）で作成しました。
+
 ## 開発中のAI利用について
 
 このゴーストは、AI コーディングエージェント（Claude Code）を用いて開発しました。

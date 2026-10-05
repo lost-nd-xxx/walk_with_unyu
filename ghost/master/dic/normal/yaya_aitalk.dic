@@ -9,9 +9,13 @@
 //******************************************************************************
 RandomTalk
 {
-	//---- 作業中は作業用のトークに差し替える
+	//---- 作業中は作業用のトークに差し替える（ポモドーロの休憩中と休憩明けも）
 	if unyu_running {
-		return UnyuWorkTalk
+		case unyu_phase {
+			when 'break' { return UnyuBreakTalk }
+			when 'wait'  { return UnyuWaitTalk }
+			others       { return UnyuWorkTalk }
+		}
 	}
 
 	TOSTR(EVAL(CHR(0x22)+REPLACE(RandomTalkEx(),CHR(0x22),CHR(0x22)+CHR(0x22))+CHR(0x22)))
@@ -28,6 +32,7 @@ RandomTalkEx : nonoverlap
 	'\0\s[0]'
 	--
 	//---- 自分のことなど
+	'作業で歩き出すときと終わったときにな、\w5\n音を鳴らせるんよ。\w9\n最初は鳴らさんようにしとるけど、\w5\n作業を始めるときの画面で切り替えられるで。'
 	'段々、関西弁がようわからんくなってきたな…\w5…\w5。\w9\nワイのは、\w5猛虎弁、\w5っちゅうやつかもしれん。'
 	'この回し車な、\w5ワイが回すときだけ回るんよ。\w9\n当たり前やな。\w9\n…\w5…\w5当たり前やんな？'
 	'ワイ、\w5この回し車から降りたことないねん。\w9\n降りたらどうなるんやろな。\w9\nまあ、\w5試さんけど。'
@@ -81,7 +86,7 @@ OnKeyPress
 		}
 		when 'm' {
 			if unyu_running {
-				UnyuProgressReport
+				UnyuRunningMenu
 			}
 			else {
 				OpenMenu
@@ -132,7 +137,8 @@ OnSurfaceRestore
 
 DefaultSurface
 {
-	if unyu_running {
+	//---- ポモドーロの休憩中は座っている
+	if UnyuWalking {
 		'\1\s[10]\0\s[1]'
 	}
 	else {

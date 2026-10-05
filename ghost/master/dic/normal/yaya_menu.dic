@@ -81,7 +81,7 @@ Menu_TALKINTERVAL
 	AYATEMPLATE.MenuItem("黙ってて","Menu_TALKNONE")
 	--
 	if unyu_running {
-		AYATEMPLATE.MenuItem("戻る","UnyuProgressReport",150)
+		AYATEMPLATE.MenuItem("戻る","UnyuRunningMenu",150)
 	}
 	else {
 		AYATEMPLATE.MenuItem("戻る","OpenMenu",150)
