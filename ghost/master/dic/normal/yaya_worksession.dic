@@ -1074,6 +1074,12 @@ UnyuBackFromPath
 //------------------------------------------------------------------------------
 OnUserInputCancel
 {
+	//---- 作業中は何もしない（始めるときに開いている入力ボックスを閉じるので、そのキャンセルが来ても
+	//---- 作業準備画面を出したり、作業時間を 0 にしたりしない。UnyuCloseInputs）
+	if unyu_running {
+		return
+	}
+
 	//---- 時間の入力をやめたときは、作業準備画面に戻す
 	if reference[0] == 'OnUnyuSetMinutes' {
 		UnyuWorkMenu('ほな、選び直そか。')
@@ -1127,7 +1133,7 @@ UnyuStartSession
 	unyu_running    = 1
 	unyu_nextnotice = UnyuNoticeStep
 
-	"\0\s[1]%(UnyuSound('start'))ほな、%(HAN2ZEN(unyu_limitmin,'num'))分な。\w9\n%(username)も頑張りや。/
+	"%(UnyuCloseInputs)\0\s[1]%(UnyuSound('start'))ほな、%(HAN2ZEN(unyu_limitmin,'num'))分な。\w9\n%(username)も頑張りや。/
 	%(UnyuFileWatchStart)\e"
 }
 
@@ -1177,6 +1183,17 @@ UnyuWatchDiff
 		}
 	}
 	_diff
+}
+
+//------------------------------------------------------------------------------
+// 開いている入力ボックスを全部閉じるタグ（作業を始めるときに付ける）
+// 呼び名や時間の入力ボックスを開いたまま始めると、作業中に入力されてしまう
+// （呼び名は OnInputUserName が作業中は受け付けないので、黙って捨てられることになる）
+// 閉じたときに OnUserInputCancel が来ても、作業中は何もしない
+//------------------------------------------------------------------------------
+UnyuCloseInputs
+{
+	'\![close,inputbox,__SYSTEM_ALL_INPUT__]'
 }
 
 //------------------------------------------------------------------------------
@@ -2039,6 +2056,8 @@ UnyuPomoStart
 	unyu_starttick = GETTICKCOUNT
 	unyu_cycle     = 1
 	unyu_worktotal = 0
+	--
+	UnyuCloseInputs
 	--
 	UnyuPomoBeginWork("ほな、\w5ポモドーロでいこか。\w9\n%(HAN2ZEN(unyu_limitmin,'num'))分歩いたら、\w5休憩や。\w9\n%(username)も頑張りや。")
 	--
