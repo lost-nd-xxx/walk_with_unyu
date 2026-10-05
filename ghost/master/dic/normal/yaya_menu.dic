@@ -127,7 +127,7 @@ Menu_HEADLINECANCEL
 //ユーザ名変更
 Menu_ChangeUserName
 {
-	'\0\s[0]ほな、呼ばれたい名前を入れてな。'
+	'\0\s[0]\![set,balloontimeout,0]ほな、呼ばれたい名前を入れてな。'
 	--
 	"\![open,inputbox,OnInputUserName,0,%(username)]\e"
 }
