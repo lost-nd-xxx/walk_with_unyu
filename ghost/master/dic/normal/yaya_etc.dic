@@ -194,8 +194,8 @@ OnBIFFComplete
 	}
 	else {
 		//---- メールが届いていた
-		"%(reference[0])通、\w5新着があったで。"
-		"%(reference[0])通、\w5新着があったで。\w9\n\s[0]忘れんうちに見ときや。"
+		"%(HAN2ZEN(reference[0],'num'))通、\w5新着があったで。"
+		"%(HAN2ZEN(reference[0],'num'))通、\w5新着があったで。\w9\n\s[0]忘れんうちに見ときや。"
 	}
 	--
 	'\e'
@@ -252,7 +252,7 @@ OnUpdateReady
 {
 	DefaultSurface
 	--
-	"%(TOINT(reference[0])+1)個、降ってくるやで。\e"
+	"%(HAN2ZEN(TOINT(reference[0])+1,'num'))個、降ってくるやで。\e"
 }
 
 //------------------------------------------------------------------------------

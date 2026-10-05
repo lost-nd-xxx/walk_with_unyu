@@ -102,7 +102,7 @@ OnHourTimeSignal
 {
 	//---- 日付が変わったときのみ喋る
 	if hour == 0 {
-		"\0\s[0]日付が変わって、%(month)月%(day)日%(ANY('やで','やね','やな'))。"
+		"\0\s[0]日付が変わって、%(HAN2ZEN(month,'num'))月%(HAN2ZEN(day,'num'))日%(ANY('やで','やね','やな'))。"
 	}
 	--
 	'\e'

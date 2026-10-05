@@ -228,7 +228,7 @@ UnyuAskMinutes
 {
 	'\0\s[0]\![set,balloontimeout,0]'
 	--
-	'何分歩いたらええ？\w9\n数字で教えてな。\w9\n（5〜120分）'
+	'何分歩いたらええ？\w9\n数字で教えてな。\w9\n（５〜１２０分）'
 	--
 	'\![open,inputbox,OnUnyuSetMinutes,0]'
 	--
@@ -250,11 +250,11 @@ OnUnyuSetMinutes
 
 	_min = TOINT(_text)
 	if _min < 5 {
-		UnyuWorkMenu('それやと短すぎるわ。\w9\n5分からにしといてな。')
+		UnyuWorkMenu('それやと短すぎるわ。\w9\n５分からにしといてな。')
 		return
 	}
 	if _min > 120 {
-		UnyuWorkMenu('そんな長いこと歩かれへんわ。\w9\n120分までにしといてな。')
+		UnyuWorkMenu('そんな長いこと歩かれへんわ。\w9\n１２０分までにしといてな。')
 		return
 	}
 
@@ -498,8 +498,8 @@ UnyuSaveReminderTalk
 {
 	_silent = _argv[0]
 
-	"\0\s[1]最後の保存から%(_silent)分経っとるで。\w9\n保存、\w5忘れてへんか？\e"
-	"\0\s[1]%(_silent)分ほど、\w5ファイルが動いとらんな。\w9\n保存だけしとき。\w9\n消えてまうと悲しいで。\e"
+	"\0\s[1]最後の保存から%(HAN2ZEN(_silent,'num'))分経っとるで。\w9\n保存、\w5忘れてへんか？\e"
+	"\0\s[1]%(HAN2ZEN(_silent,'num'))分ほど、\w5ファイルが動いとらんな。\w9\n保存だけしとき。\w9\n消えてまうと悲しいで。\e"
 	"\0\s[1]ちょっと手ぇ止まっとるな。\w9\n休憩ならええんやけど、\w5保存はしたか？\e"
 }
 
@@ -530,8 +530,8 @@ UnyuNoticeTalk
 	_silent = UnyuSilentMin
 
 	if unyu_count <= 0 {
-		"\0\s[1]%(_min)分経ったで。\w9\n悩んどるんか？\w9\n残り%(_rest)分、ぼちぼちいこか。\e"
-		"\0\s[1]%(_min)分経ったで。\w9\n考えがまとまらんときもあるわな。\w9\n残り%(_rest)分、ゆっくりいこ。\e"
+		"\0\s[1]%(HAN2ZEN(_min,'num'))分経ったで。\w9\n悩んどるんか？\w9\n残り%(HAN2ZEN(_rest,'num'))分、ぼちぼちいこか。\e"
+		"\0\s[1]%(HAN2ZEN(_min,'num'))分経ったで。\w9\n考えがまとまらんときもあるわな。\w9\n残り%(HAN2ZEN(_rest,'num'))分、ゆっくりいこ。\e"
 	}
 	elseif !unyu_saidsave && _silent >= UnyuSilentLimit {
 		//---- 中間報告のタイミングで無音なら、ここでも心配する
@@ -541,13 +541,13 @@ UnyuNoticeTalk
 		UnyuSaveReminderTalk(_silent)
 	}
 	elseif _diff > 0 {
-		"\0\s[1]%(_min)分で更新%(unyu_count)回、\w5%(UnyuSizeText(_diff))増えとるで。\w9\n残り%(_rest)分や。\e"
+		"\0\s[1]%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))増えとるで。\w9\n残り%(HAN2ZEN(_rest,'num'))分や。\e"
 	}
 	elseif _diff < 0 {
-		"\0\s[1]%(_min)分で更新%(unyu_count)回、\w5%(UnyuSizeText(_diff))減っとるで。\w9\n残り%(_rest)分や。\e"
+		"\0\s[1]%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))減っとるで。\w9\n残り%(HAN2ZEN(_rest,'num'))分や。\e"
 	}
 	else {
-		"\0\s[1]%(_min)分で%(unyu_count)回の更新やな。\w9\n残り%(_rest)分、その調子や。\e"
+		"\0\s[1]%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(unyu_count,'num'))回の更新やな。\w9\n残り%(HAN2ZEN(_rest,'num'))分、その調子や。\e"
 	}
 }
 
@@ -645,22 +645,22 @@ UnyuReportTalk
 	_size  = UnyuSizeText(_diff)
 
 	if _count <= 0 {
-		"この%(_min)分、\w5更新はなしやったな。\w9\n考えとった時間かもしれんし、\w5それはそれでええ。\w9\nまたやろか？\e"
-		"%(_min)分、\w5ファイルは動かんかったわ。\w9\n手が止まる日もあるわな。\w9\nお疲れさん。\e"
+		"この%(HAN2ZEN(_min,'num'))分、\w5更新はなしやったな。\w9\n考えとった時間かもしれんし、\w5それはそれでええ。\w9\nまたやろか？\e"
+		"%(HAN2ZEN(_min,'num'))分、\w5ファイルは動かんかったわ。\w9\n手が止まる日もあるわな。\w9\nお疲れさん。\e"
 		return
 	}
 
 	if _diff > 0 {
-		"この%(_min)分で監視対象ファイルの更新が%(_count)回あったで。\w9\nファイルサイズは%(_size)変化しとったな。\w9\n進捗はどうや？\e"
-		"%(_min)分で%(_count)回の更新、\w5%(_size)増えたで。\w9\nようやったな、%(username)。\w9\nちょっと休んどき。\e"
+		"この%(HAN2ZEN(_min,'num'))分で監視対象ファイルの更新が%(HAN2ZEN(_count,'num'))回あったで。\w9\nファイルサイズは%(_size)変化しとったな。\w9\n進捗はどうや？\e"
+		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新、\w5%(_size)増えたで。\w9\nようやったな、%(username)。\w9\nちょっと休んどき。\e"
 	}
 	elseif _diff < 0 {
-		"更新%(_count)回で、\w5%(_size)減っとるな。\w9\n削るんも進捗やで。\w9\nようやった。\e"
-		"この%(_min)分、\w5%(_count)回さわって%(_size)減ったわ。\w9\n刈り込んだんやな。\w9\nお疲れさん。\e"
+		"更新%(HAN2ZEN(_count,'num'))回で、\w5%(_size)減っとるな。\w9\n削るんも進捗やで。\w9\nようやった。\e"
+		"この%(HAN2ZEN(_min,'num'))分、\w5%(HAN2ZEN(_count,'num'))回さわって%(_size)減ったわ。\w9\n刈り込んだんやな。\w9\nお疲れさん。\e"
 	}
 	else {
-		"%(_min)分で%(_count)回の更新やな。\w9\nサイズはほぼ変わらずや。\w9\n直しとったんか？\w9\nお疲れさん。\e"
-		"更新は%(_count)回、\w5サイズは据え置きやな。\w9\n手を入れとったんやろ。\w9\nええ時間やったな。\e"
+		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新やな。\w9\nサイズはほぼ変わらずや。\w9\n直しとったんか？\w9\nお疲れさん。\e"
+		"更新は%(HAN2ZEN(_count,'num'))回、\w5サイズは据え置きやな。\w9\n手を入れとったんやろ。\w9\nええ時間やったな。\e"
 	}
 }
 
@@ -680,16 +680,16 @@ UnyuProgressReport
 	'\0\s[1]'
 	--
 	if unyu_count <= 0 {
-		"今んとこ%(_min)分、\w5更新はまだやな。\w9\n残り%(_rest)分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分、\w5更新はまだやな。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	elseif _diff > 0 {
-		"今んとこ%(_min)分で更新%(unyu_count)回、\w5%(UnyuSizeText(_diff))増えとる。\w9\n残り%(_rest)分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))増えとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	elseif _diff < 0 {
-		"今んとこ%(_min)分で更新%(unyu_count)回、\w5%(UnyuSizeText(_diff))減っとる。\w9\n残り%(_rest)分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で更新%(HAN2ZEN(unyu_count,'num'))回、\w5%(UnyuSizeText(_diff))減っとる。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	else {
-		"今んとこ%(_min)分で%(unyu_count)回の更新や。\w9\n残り%(_rest)分やで。"
+		"今んとこ%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(unyu_count,'num'))回の更新や。\w9\n残り%(HAN2ZEN(_rest,'num'))分やで。"
 	}
 	--
 	AYATEMPLATE.MenuItem("まだ続ける","UnyuResume",200)
@@ -724,10 +724,10 @@ UnyuAbort
 	'\0\s[0]'
 	--
 	if _count <= 0 {
-		"%(_min)分で切り上げやな。\w9\n更新はなしやったで。\w9\nまた気が向いたら呼んでな。\e"
+		"%(HAN2ZEN(_min,'num'))分で切り上げやな。\w9\n更新はなしやったで。\w9\nまた気が向いたら呼んでな。\e"
 	}
 	else {
-		"%(_min)分で切り上げか。\w9\n更新は%(_count)回あったで。\w9\nようやった、お疲れさん。\e"
+		"%(HAN2ZEN(_min,'num'))分で切り上げか。\w9\n更新は%(HAN2ZEN(_count,'num'))回あったで。\w9\nようやった、お疲れさん。\e"
 	}
 }
 
