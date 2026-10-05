@@ -282,4 +282,7 @@ OnSHIORI3FW.Lint.UsedFunctions : array
 	'^MouseWheelUp\d'
 	'^MouseWheelDown\d'
 	'^MouseWheel\d'
+	//---- 見るファイルの画面が "UnyuWatchEdit%(_i)" の形で番号を付けて選択肢を作る（yaya_worksession.dic）
+	'^UnyuWatchEdit\d'
+	'^UnyuWatchRemove\d'
 }

@@ -26,6 +26,12 @@ OnSystemLoad.RemoveTempVar
 	ERASEVAR('unyu_worktotal')
 	ERASEVAR('unyu_breakmin')
 	ERASEVAR('unyu_breaksave')
+	ERASEVAR('unyu_watchfiles')
+	ERASEVAR('unyu_filealive')
+	ERASEVAR('unyu_filecounts')
+	ERASEVAR('unyu_filegone')
+	ERASEVAR('unyu_inwatchmenu')
+	ERASEVAR('unyu_editindex')
 }
 
 //******************************************************************************

@@ -6,8 +6,10 @@
 // 一定時間の作業を見守って、終わりに更新回数とファイルサイズの変化を報告する。
 //
 // 保存する変数（次回も使う設定）
-//   unyu_watchpath  監視するファイルのパス
-//   unyu_sound      効果音を鳴らすなら 1。最初は 0（鳴らさない）
+//   unyu_watchpaths 監視するファイルのパス（4 つまで）。| でつないだ 1 つの文字列（| はパスに使えない）
+//                   読み書きは UnyuWatchList / UnyuWatchListSet を通す。
+//                   以前の 1 ファイルだけの unyu_watchpath は、読み込むときにこちらへ移す
+//   unyu_sound     効果音を鳴らすなら 1。最初は 0（鳴らさない）
 //   unyu_single_min 1 回だけのときの作業時間（分）。最初は 25
 //   unyu_pomo_work  ポモドーロの作業時間（分）
 //   unyu_pomo_break ポモドーロの休憩時間（分）
@@ -20,8 +22,12 @@
 //   unyu_phase      'work'（歩いている）、'break'（休憩中）、'wait'（休憩明けの確認待ち）
 //   unyu_starttick  開始時の GETTICKCOUNT（ミリ秒）
 //   unyu_limitmin   今回の作業時間（分）。ポモドーロでは 1 回ぶんの作業時間
-//   unyu_basesize   開始時のファイルサイズ（バイト）。取れなければ -1
-//   unyu_count      監視中に数えた更新回数（休憩中の保存は数えない）
+//   unyu_watchfiles 今回見ているファイルのパス（配列）。開始時に unyu_watchpaths から写す
+//   unyu_filealive  ファイルごとに、まだ見られているなら 1（配列。見えなくなったファイルは 0）
+//   unyu_filecounts ファイルごとの更新回数（配列。いちばん動いたファイルを言うのに使う）
+//   unyu_filegone   ファイルごとに、deleted が来た GETTICKCOUNT（配列。来ていなければ 0）
+//   unyu_basesize   開始時のファイルサイズ（バイト。配列）。取れなければ -1
+//   unyu_count      監視中に数えた更新回数。全ファイルの合計（休憩中の保存は数えない）
 //   unyu_nextnotice 次に中間報告をする経過分（1 回だけのときのみ）
 //   unyu_lasttick   最後にファイルが変わった GETTICKCOUNT。まだ無ければ作業を始めた時刻
 //   unyu_saidsave   保存忘れを言った後なら 1。次に保存されると 0 に戻る
@@ -29,10 +35,13 @@
 //   unyu_phasetick  今の作業または休憩を始めた GETTICKCOUNT
 //   unyu_cycle      何回目の作業か（1 から）
 //   unyu_cyclecount 今の作業で数えた更新回数
-//   unyu_cyclebase  今の作業を始めたときのファイルサイズ。取れなければ -1
+//   unyu_cyclebase  今の作業を始めたときのファイルサイズ（配列）。取れなければ -1
 //   unyu_worktotal  終わった作業の合計（分）
 //   unyu_breakmin   今の休憩の長さ（分）
 //   unyu_breaksave  休憩中の保存。0 なし、1 見つけた（まだ言っていない）、2 言った
+//   ---- ここから見るファイルの画面で使う
+//   unyu_inwatchmenu 見るファイルの画面から入力ボックスを開いたなら 1（入力の後にその画面へ戻る）
+//   unyu_editindex   入力ボックスで差し替えるファイルの番号。足すときは -1
 //******************************************************************************
 
 //------------------------------------------------------------------------------
@@ -52,7 +61,7 @@ OnSystemLoad.UnyuSession
 //------------------------------------------------------------------------------
 UnyuSessionInit
 {
-	SHIORI3FW.RegisterTempVar('unyu_running','unyu_mode','unyu_phase','unyu_starttick','unyu_limitmin','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave','unyu_phasetick','unyu_cycle','unyu_cyclecount','unyu_cyclebase','unyu_worktotal','unyu_breakmin','unyu_breaksave')
+	SHIORI3FW.RegisterTempVar('unyu_running','unyu_mode','unyu_phase','unyu_starttick','unyu_limitmin','unyu_watchfiles','unyu_filealive','unyu_filecounts','unyu_filegone','unyu_basesize','unyu_count','unyu_nextnotice','unyu_lasttick','unyu_saidsave','unyu_phasetick','unyu_cycle','unyu_cyclecount','unyu_cyclebase','unyu_worktotal','unyu_breakmin','unyu_breaksave','unyu_inwatchmenu','unyu_editindex')
 
 	if !ISVAR('unyu_running') {
 		unyu_running = 0
@@ -60,8 +69,18 @@ UnyuSessionInit
 	if !ISVAR('unyu_phase') {
 		unyu_phase = ''
 	}
-	if !ISVAR('unyu_watchpath') {
-		unyu_watchpath = ''
+	unyu_inwatchmenu = 0
+	unyu_editindex   = -1
+
+	//---- 見るファイル。以前の 1 ファイルだけの設定（unyu_watchpath）があれば移す
+	if !ISVAR('unyu_watchpaths') {
+		unyu_watchpaths = ''
+	}
+	if ISVAR('unyu_watchpath') {
+		if STRLEN(unyu_watchpaths) == 0 {
+			unyu_watchpaths = unyu_watchpath
+		}
+		ERASEVAR('unyu_watchpath')
 	}
 	if !ISVAR('unyu_single_min') {
 		unyu_single_min = 25
@@ -134,8 +153,9 @@ UnyuWorkMenu
 {
 	//---- 時間はまだ選んでいない。前回のセッションの値を残さない
 	//---- unyu_mode は、入力の後にどちらの画面へ戻るかの目印にもなる（UnyuBackToSetup）
-	unyu_limitmin = 0
-	unyu_mode     = 'single'
+	unyu_limitmin    = 0
+	unyu_mode        = 'single'
+	unyu_inwatchmenu = 0
 
 	'\0\s[0]\![quicksection,1]'
 	--
@@ -171,6 +191,37 @@ UnyuWorkMenu
 	AYATEMPLATE.MenuItem("やっぱやめとく","UnyuCancelMenu",150)
 	--
 	'\![quicksection,0]\e'
+}
+
+//------------------------------------------------------------------------------
+// 灰色（無効表示と同じ色）で出す選択肢。押すことはできる。引数は UnyuShortMenuItem と同じ
+// \q[...] の文字には色を付けられないので、\__q[関数名]文字\__q の形で作る
+// こちらは文字がスクリプトとして解釈されるので、AYATEMPLATE.EscapeText ではなく EscapeAllTags を通す
+//------------------------------------------------------------------------------
+UnyuDimMenuItem
+{
+	_text  = _argv[0]
+	_width = 20
+	if _argc > 3 {
+		_width = _argv[3]
+	}
+	if _width > 0 {
+		_text = SHIORI3FW.MakeJustText(_text,_width)
+	}
+
+	_lftext   = ''
+	_linefeed = _argv[2]
+	while _linefeed > 0 {
+		if _linefeed >= 100 {
+			_lftext += '\n'
+		}
+		else {
+			_lftext += '\n[half]'
+		}
+		_linefeed -= 100
+	}
+
+	_lftext + '\![*]\__q[' + _argv[1] + ']\f[disable]' + SHIORI3FW.EscapeAllTags(_text) + '\f[default]\__q'
 }
 
 //------------------------------------------------------------------------------
@@ -254,31 +305,300 @@ UnyuSetupSoundPreview
 	UnyuBackToSetup('\![quicksection,0]歩き出すときはこれで、' + UnyuSoundTag('start') + '終わったときはこれや。' + UnyuSoundTag('end') + '\![quicksection,1]' )
 }
 
-//---- 見るファイルの項目。決まっていればその名前を出す
-//---- 長い名前でも MakeJustText に切り詰められないよう、幅はそろえない（UnyuShortMenuItem の幅 0）
+//---- 見るファイルの項目。1 つ目の名前と、ほかにいくつあるかを出す
+//---- まだ無いときは、見るファイルの画面を通さずに、すぐ聞く
 UnyuWatchFileSetupItem
 {
-	if STRLEN(unyu_watchpath) > 0 {
-		AYATEMPLATE.MenuItem("見るファイル: 「%(UnyuWatchFileName)」","UnyuAskPath",100)
+	_list = UnyuWatchList
+	_n    = ARRAYSIZE(_list)
+
+	if _n <= 0 {
+		return AYATEMPLATE.MenuItem("見るファイルを決める","UnyuAskPathAdd",100)
+	}
+
+	//---- 見当たらないファイルがあれば、名前の代わりに数を出して印を付ける
+	//---- （始めるまで気づかない、ということがないように。名前と印を両方出すと長すぎて切り詰められる）
+	_missing = 0
+	foreach _list ; _path {
+		if !UnyuWatchExists(_path) {
+			_missing += 1
+		}
+	}
+
+	//---- ローカル変数は { } の外で作っておく（中で作ると外で消える）
+	_text = "見るファイル: 「%(UnyuWatchFileName(_list[0]))」"
+	if _missing > 0 {
+		_text = "見るファイル: %(HAN2ZEN(_n,'num'))つ（" + UnyuMissingWord + 'あり）'
 	}
 	else {
-		AYATEMPLATE.MenuItem("見るファイルを決める","UnyuAskPath",100)
+		if _n > 1 {
+			_text += "ほか%(HAN2ZEN(_n - 1,'num'))つ"
+		}
 	}
+	AYATEMPLATE.MenuItem(_text,"UnyuWatchMenu",100)
 }
 
 //------------------------------------------------------------------------------
-// 見ているファイルの名前（フォルダを除く）。選択肢に出す用
-// 選択肢の文字は UnyuShortMenuItem が AYATEMPLATE.EscapeText で囲むので、ここではエスケープしない
+// ファイルの名前（フォルダを除く）。選択肢に出す用。_argv[0] はパス
+// 選択肢の文字は AYATEMPLATE.EscapeText で囲まれるので、ここではエスケープしない
+// 台詞に出すときは SHIORI3FW.EscapeAllTags を通す（UnyuWatchFileTalkName）
 // 長すぎるときは、頭だけ残して「（略）」を付ける。幅は全角 1、半角 0.5 で数える
-// 「見るファイル: 「」」と合わせて、全角 24 文字ぶんくらいに収まるようにしている
+// 「見るファイル: 「」ほか３つ」と合わせて、全角 24 文字ぶんくらいに収まるようにしている
 //   名前（拡張子を除く）: 全角 10 文字ぶんを超えたら、7 文字ぶんまで縮める
 //   拡張子              : 基本的に省略しない。全角 5 文字ぶん（半角 10 文字）を超えたときだけ縮める
 //------------------------------------------------------------------------------
 UnyuWatchFileName
 {
-	_parts = SPLITPATH(unyu_watchpath)
+	_parts = SPLITPATH(_argv[0])
 
 	UnyuShorten(_parts[2],10,7) + UnyuShorten(_parts[3],5,3)
+}
+
+//---- 台詞に出す用。ファイル名に \ や % が入っていてもタグとして解釈されないようにする
+UnyuWatchFileTalkName
+{
+	SHIORI3FW.EscapeAllTags(UnyuWatchFileName(_argv[0]))
+}
+
+//******************************************************************************
+// 見るファイルの一覧（4 つまで）
+//******************************************************************************
+
+//------------------------------------------------------------------------------
+// 見るファイルの上限
+//------------------------------------------------------------------------------
+UnyuWatchMax
+{
+	4
+}
+
+//------------------------------------------------------------------------------
+// 保存してある見るファイルを配列で返す（空の要素は除く）
+//------------------------------------------------------------------------------
+UnyuWatchList
+{
+	_list = IARRAY
+	foreach SPLIT(unyu_watchpaths,'|') ; _path {
+		if STRLEN(_path) > 0 {
+			_list ,= _path
+		}
+	}
+	_list
+}
+
+//------------------------------------------------------------------------------
+// 見るファイルを保存する。_argv に配列を渡す
+//------------------------------------------------------------------------------
+UnyuWatchListSet
+{
+	_text = ''
+	for _i = 0 ; _i < _argc ; _i++ {
+		if STRLEN(_argv[_i]) > 0 {
+			if STRLEN(_text) > 0 {
+				_text += '|'
+			}
+			_text += _argv[_i]
+		}
+	}
+	unyu_watchpaths = _text
+}
+
+//------------------------------------------------------------------------------
+// ファイルが今あるなら 1。FSIZE は失敗すると -1 を返す
+// 見当たらないファイルも一覧からは消さない（同期の途中や、外付けのドライブを抜いているだけかもしれない）
+// 消すかどうかは、見るファイルの画面の「外す」でユーザーが決める
+//------------------------------------------------------------------------------
+UnyuWatchExists
+{
+	FSIZE(_argv[0]) >= 0
+}
+
+//---- 見当たらないファイルに付ける言葉（一覧の画面では「（迷子）」、設定画面では「（迷子あり）」）
+UnyuMissingWord
+{
+	'迷子'
+}
+
+//------------------------------------------------------------------------------
+// 保存してある見るファイルのうち、今あるものを配列で返す
+//------------------------------------------------------------------------------
+UnyuWatchListExisting
+{
+	_list = IARRAY
+	foreach UnyuWatchList ; _path {
+		if UnyuWatchExists(_path) {
+			_list ,= _path
+		}
+	}
+	_list
+}
+
+//------------------------------------------------------------------------------
+// 保存してある見るファイルのうち、見当たらないものの名前を、台詞に使える形の配列で返す
+//------------------------------------------------------------------------------
+UnyuWatchMissingNames
+{
+	_names = IARRAY
+	foreach UnyuWatchList ; _path {
+		if !UnyuWatchExists(_path) {
+			_names ,= UnyuWatchFileTalkName(_path)
+		}
+	}
+	_names
+}
+
+//------------------------------------------------------------------------------
+// 名前の配列を「「a」と「b」」の形の文字列にする
+//------------------------------------------------------------------------------
+UnyuJoinNames
+{
+	_text = ''
+	for _i = 0 ; _i < _argc ; _i++ {
+		if _i > 0 {
+			_text += 'と'
+		}
+		_text += '「' + _argv[_i] + '」'
+	}
+	_text
+}
+
+//------------------------------------------------------------------------------
+// 見るファイルの画面（作業準備画面・ポモドーロの設定画面の「見るファイル」から）
+// 名前を選ぶとそのファイルを差し替え、右の「外す」で外す
+// _argv[0] に台詞を渡すと、最初の一言の代わりにそれを言う（末尾に \n を付けない）
+//------------------------------------------------------------------------------
+UnyuWatchMenu
+{
+	unyu_inwatchmenu = 1
+
+	_list = UnyuWatchList
+	_n    = ARRAYSIZE(_list)
+
+	'\0\s[0]\![quicksection,1]'
+	--
+	if _argc > 0 {
+		_argv[0]
+		--
+		'\n'
+	}
+	--
+	if _n <= 0 {
+		'見るファイルは、まだ決まっとらんな。'
+	}
+	else {
+		"今見とるんは、この%(HAN2ZEN(_n,'num'))つや。"
+	}
+	--
+	//---- 見当たらないファイルは灰色にして、印を付ける（押せば今までどおり差し替えられる）
+	//---- 印のぶん名前が長くなるので、そのときは左の列を広げる（狭いと MakeJustText が切り詰める）
+	_width = 32
+	for _i = 0 ; _i < _n ; _i++ {
+		if !UnyuWatchExists(_list[_i]) {
+			_width = 40
+		}
+	}
+
+	_items = ''
+	for _i = 0 ; _i < _n ; _i++ {
+		_linefeed = 100
+		if _i == 0 {
+			_linefeed = 150
+		}
+		if UnyuWatchExists(_list[_i]) {
+			_items += UnyuShortMenuItem(UnyuWatchFileName(_list[_i]),"UnyuWatchEdit%(_i)",_linefeed,_width)
+		}
+		else {
+			_items += UnyuDimMenuItem(UnyuWatchFileName(_list[_i]) + '（' + UnyuMissingWord + '）',"UnyuWatchEdit%(_i)",_linefeed,_width)
+		}
+		_items += UnyuShortMenuItem('外す',"UnyuWatchRemove%(_i)",0,0)
+	}
+	_items
+	--
+	if _n <= 0 {
+		AYATEMPLATE.MenuItem("ファイルを足す","UnyuAskPathAdd",150)
+	}
+	elseif _n < UnyuWatchMax {
+		AYATEMPLATE.MenuItem("ファイルを足す","UnyuAskPathAdd")
+	}
+	else {
+		"\n\![*]\f[disable]ファイルを足す（%(HAN2ZEN(UnyuWatchMax,'num'))つまで）\f[default]"
+	}
+	--
+	AYATEMPLATE.MenuItem("戻る","UnyuWatchBack",150)
+	--
+	'\![quicksection,0]\e'
+}
+
+//---- 元の設定画面に戻る
+UnyuWatchBack
+{
+	unyu_inwatchmenu = 0
+	--
+	UnyuBackToSetup('ほな、これで見とくで。')
+}
+
+//---- 選択肢から呼ぶ関数は名前で決まるので、番号ごとに用意する（UnyuWatchMax と数を合わせる）
+UnyuWatchEdit0
+{
+	UnyuAskPathEdit(0)
+}
+
+UnyuWatchEdit1
+{
+	UnyuAskPathEdit(1)
+}
+
+UnyuWatchEdit2
+{
+	UnyuAskPathEdit(2)
+}
+
+UnyuWatchEdit3
+{
+	UnyuAskPathEdit(3)
+}
+
+UnyuWatchRemove0
+{
+	UnyuWatchRemove(0)
+}
+
+UnyuWatchRemove1
+{
+	UnyuWatchRemove(1)
+}
+
+UnyuWatchRemove2
+{
+	UnyuWatchRemove(2)
+}
+
+UnyuWatchRemove3
+{
+	UnyuWatchRemove(3)
+}
+
+//---- _argv[0] 番目のファイルを外して、見るファイルの画面に戻す
+UnyuWatchRemove
+{
+	_list = UnyuWatchList
+	_i    = _argv[0]
+
+	//---- 古い選択肢を押されたときは、何もせずに画面を出し直す
+	if _i >= ARRAYSIZE(_list) {
+		return UnyuWatchMenu
+	}
+
+	_name = UnyuWatchFileTalkName(_list[_i])
+	_rest = IARRAY
+	for _j = 0 ; _j < ARRAYSIZE(_list) ; _j++ {
+		if _j != _i {
+			_rest ,= _list[_j]
+		}
+	}
+	UnyuWatchListSet(_rest)
+	--
+	UnyuWatchMenu("「%(_name)」は外したで。")
 }
 
 //------------------------------------------------------------------------------
@@ -451,38 +771,44 @@ UnyuCancelMenu
 }
 
 //------------------------------------------------------------------------------
-// パスが決まっていれば開始、なければ聞く
+// 見るファイルが決まっていれば開始、なければ聞く
+// 無くなったファイル（移動や削除）は外してから始める。全部無くなっていたら聞き直す
 //------------------------------------------------------------------------------
 UnyuStartCheck
 {
-	if UnyuWatchPathExists {
-		UnyuStartSession
+	//---- 1 つも決まっていなければ聞く（決まったらそのまま始める）
+	if ARRAYSIZE(UnyuWatchList) <= 0 {
+		return UnyuAskPathAdd
 	}
-	elseif STRLEN(unyu_watchpath) > 0 {
-		//---- 決めてあったファイルが、移動や削除で無くなっている。未設定に戻して聞き直す
-		unyu_watchpath = ''
-		UnyuAskPath('前に見とったファイル、\w5見当たらんようになっとるわ。\w9\n')
+
+	//---- 全部見当たらないときは、見るファイルの画面で直してもらう
+	//---- 直した直後に始まってしまわないよう、作業時間は 0 に戻す（OnUnyuSetPath）
+	if ARRAYSIZE(UnyuWatchListExisting) <= 0 {
+		unyu_limitmin = 0
+		return UnyuWatchMenu('見るファイルが、\w5どれも見当たらんわ。\w9\n直してから、\w5もういっぺん始めてな。')
+	}
+
+	//---- 見当たらないファイルは今回だけ見ずに始める。一覧には残す
+	_missing = UnyuWatchMissingNames
+	if ARRAYSIZE(_missing) > 0 {
+		'\0\s[0]' + "%(UnyuJoinNames(_missing))は見当たらんから、\w5\n今回は外して始めるで。\w9\n" + UnyuStartSession
 	}
 	else {
-		UnyuAskPath
+		UnyuStartSession
 	}
 }
 
 //------------------------------------------------------------------------------
-// 見るファイルが決まっていて、今も実在するなら 1。FSIZE は失敗すると -1 を返す
-//------------------------------------------------------------------------------
-UnyuWatchPathExists
-{
-	STRLEN(unyu_watchpath) > 0 && FSIZE(unyu_watchpath) >= 0
-}
-
-//------------------------------------------------------------------------------
-// 監視するファイルを尋ねる
+// 見るファイルを尋ねる
+//   UnyuAskPathAdd   新しく足す（入力欄は空）
+//   UnyuAskPathEdit  _argv[0] 番目を差し替える（入力欄に今のパスを入れておく）
 // ID を On で始めると、その名前のイベントが直接発生する
-// _argv[0] に台詞を渡すと、問いかけの前に言う
+// UnyuAskPathAdd の _argv[0] に台詞を渡すと、問いかけの前に言う
 //------------------------------------------------------------------------------
-UnyuAskPath
+UnyuAskPathAdd
 {
+	unyu_editindex = -1
+
 	'\0\s[0]\![set,balloontimeout,0]'
 	--
 	if _argc > 0 {
@@ -491,43 +817,89 @@ UnyuAskPath
 	--
 	'どのファイルを見とけばええ？\w9\nフルパスで教えてな。'
 	--
-	"\![open,inputbox,OnUnyuSetPath,0,%(AYATEMPLATE.EscapeText(unyu_watchpath))]"
+	'\![open,inputbox,OnUnyuSetPath,0]'
 	--
 	'\e'
 }
 
+UnyuAskPathEdit
+{
+	_list = UnyuWatchList
+
+	//---- 古い選択肢を押されたときは、何もせずに画面を出し直す
+	if _argv[0] >= ARRAYSIZE(_list) {
+		return UnyuWatchMenu
+	}
+
+	unyu_editindex = _argv[0]
+
+	'\0\s[0]\![set,balloontimeout,0]'
+	--
+	"「%(UnyuWatchFileTalkName(_list[_argv[0]]))」の代わりに、\w5\nどのファイルを見とけばええ？\w9\nフルパスで教えてな。"
+	--
+	"\![open,inputbox,OnUnyuSetPath,0,%(AYATEMPLATE.EscapeText(_list[_argv[0]]))]"
+	--
+	'\e'
+}
+
+//------------------------------------------------------------------------------
+// 入力を受け取る
+// うまくいかなかったときは、一言添えて元の画面（見るファイルの画面か、作業準備・ポモドーロの設定）に戻す
+// 打ち間違いで前の設定まで失わないよう、差し替えのときは前のファイルがまだあれば残す
+// 前のファイルも無くなっていたら外す（見られないファイルを残しておいても使えない）
+//------------------------------------------------------------------------------
 OnUnyuSetPath
 {
 	//---- ID が On で始まるイベントなので、Reference は一つ前にずれる
 	//---- reference[0] が入力内容（OnUserInput の reference[1] にあたる）
 	_path = reference[0]
+	_list = UnyuWatchList
+	_edit = unyu_editindex
+	if _edit >= ARRAYSIZE(_list) {
+		_edit = -1
+	}
 
-	//---- うまくいかなかったときは、一言添えて元の画面（作業準備かポモドーロの設定）に戻す
-	//---- 打ち間違いで前の設定まで失わないよう、前のファイルがまだあるなら unyu_watchpath は変えない
-	//---- 前のファイルも無くなっていたら、未設定に戻す（見られないファイルを残しておいても使えない）
 	_keep = ''
 	if STRLEN(_path) < 1 || FSIZE(_path) < 0 {
-		if UnyuWatchPathExists {
-			_keep = '\w9\n前のファイルのままにしとくで。'
-		}
-		elseif STRLEN(unyu_watchpath) > 0 {
-			unyu_watchpath = ''
-			_keep = '\w9\n前のファイルも見当たらんから、\w5決め直してな。'
+		if _edit >= 0 {
+			if FSIZE(_list[_edit]) >= 0 {
+				_keep = '\n変更前のファイルのままにしとくで。'
+			}
+			else {
+				_list[_edit] = ''
+				UnyuWatchListSet(_list)
+				_keep = '\n変更前のファイルも見当たらんから、外しといたで。'
+			}
 		}
 	}
 
 	if STRLEN(_path) < 1 {
-		UnyuBackToSetup('なんも入っとらんかったわ。' + _keep)
-		return
+		return UnyuBackFromPath('なんも入っとらんかったわ。' + _keep)
 	}
 
 	//---- 実在するか確かめる。FSIZE は失敗すると -1 を返す
 	if FSIZE(_path) < 0 {
-		UnyuBackToSetup('そのファイル、\w5見つからんかったわ。' + _keep)
-		return
+		return UnyuBackFromPath('そのファイル、見つからんかったわ。' + _keep)
 	}
 
-	unyu_watchpath = _path
+	//---- もう見ているファイルなら、足さない（差し替えで同じファイルを入れ直したのは構わない）
+	//---- Windows のパスは大文字と小文字を区別しないので、そろえて比べる
+	for _i = 0 ; _i < ARRAYSIZE(_list) ; _i++ {
+		if _i != _edit && TOLOWER(_list[_i]) == TOLOWER(_path) {
+			return UnyuBackFromPath('そのファイルは、もう見とるで。')
+		}
+	}
+
+	if _edit >= 0 {
+		_list[_edit] = _path
+	}
+	elseif ARRAYSIZE(_list) < UnyuWatchMax {
+		_list ,= _path
+	}
+	else {
+		return UnyuBackFromPath("もう%(HAN2ZEN(UnyuWatchMax,'num'))つ見とるから、これ以上は無理やわ。")
+	}
+	UnyuWatchListSet(_list)
 
 	//---- 時間を選んだ後に聞いたのなら、そのまま始める
 	//---- 「見るファイル」の項目から来たのなら、元の画面に戻す
@@ -535,7 +907,18 @@ OnUnyuSetPath
 		UnyuStartSession
 	}
 	else {
-		UnyuBackToSetup('覚えたで。')
+		UnyuBackFromPath('覚えたで。')
+	}
+}
+
+//---- 見るファイルの入力の後に、元の画面へ戻す
+UnyuBackFromPath
+{
+	if unyu_inwatchmenu {
+		UnyuWatchMenu(_argv[0])
+	}
+	else {
+		UnyuBackToSetup(_argv[0])
 	}
 }
 
@@ -548,13 +931,13 @@ OnUserInputCancel
 {
 	//---- 時間の入力をやめたときは、作業準備画面に戻す
 	if reference[0] == 'OnUnyuSetMinutes' {
-		UnyuWorkMenu('ほな、\w5選び直そか。')
+		UnyuWorkMenu('ほな、選び直そか。')
 		return
 	}
 
 	//---- ポモドーロの設定の入力をやめたときは、設定の画面に戻す
 	if SUBSTR(reference[0],0,13) == 'OnUnyuSetPomo' {
-		UnyuPomoMenu('ほな、\w5そのままにしとくで。')
+		UnyuPomoMenu('ほな、そのままにしとくで。')
 		return
 	}
 
@@ -564,7 +947,7 @@ OnUserInputCancel
 
 	//---- 「見るファイル」の項目から来たのなら、元の画面に戻す
 	if unyu_limitmin <= 0 {
-		UnyuBackToSetup('ほな、\w5そのままにしとくで。')
+		UnyuBackFromPath('ほな、そのままにしとくで。')
 		return
 	}
 
@@ -591,7 +974,7 @@ UnyuStartSession
 
 	unyu_mode       = 'single'
 	unyu_phase      = 'work'
-	unyu_basesize   = FSIZE(unyu_watchpath)
+	UnyuWatchBegin
 	unyu_count      = 0
 	unyu_starttick  = GETTICKCOUNT
 	unyu_lasttick   = GETTICKCOUNT
@@ -604,11 +987,100 @@ UnyuStartSession
 }
 
 //------------------------------------------------------------------------------
-// ファイル監視を始めるタグ
+// 今回見るファイルを決めて、ファイルごとの変数を用意する（開始時に 1 回）
+// 途中で設定を変えられても困らないよう、保存してある一覧を写して使う
+//------------------------------------------------------------------------------
+UnyuWatchBegin
+{
+	unyu_watchfiles = UnyuWatchListExisting
+	unyu_filealive  = IARRAY
+	unyu_filecounts = IARRAY
+	unyu_filegone   = IARRAY
+	for _i = 0 ; _i < ARRAYSIZE(unyu_watchfiles) ; _i++ {
+		unyu_filealive  ,= 1
+		unyu_filecounts ,= 0
+		unyu_filegone   ,= 0
+	}
+	unyu_basesize = UnyuWatchSizes
+}
+
+//------------------------------------------------------------------------------
+// 今のファイルサイズを、ファイルごとの配列で返す。取れなければ -1
+//------------------------------------------------------------------------------
+UnyuWatchSizes
+{
+	_sizes = IARRAY
+	foreach unyu_watchfiles ; _path {
+		_sizes ,= FSIZE(_path)
+	}
+	_sizes
+}
+
+//------------------------------------------------------------------------------
+// ファイルサイズの変化の合計（バイト）。_argv に基準のサイズの配列を渡す
+// 見えなくなったファイルと、サイズが取れないファイルは数えない
+//------------------------------------------------------------------------------
+UnyuWatchDiff
+{
+	_diff = 0
+	for _i = 0 ; _i < ARRAYSIZE(unyu_watchfiles) ; _i++ {
+		if _i < _argc && unyu_filealive[_i] {
+			_now = FSIZE(unyu_watchfiles[_i])
+			if _now >= 0 && _argv[_i] >= 0 {
+				_diff += _now - _argv[_i]
+			}
+		}
+	}
+	_diff
+}
+
+//------------------------------------------------------------------------------
+// ファイル監視を始める・やめるタグ（見ているファイルすべて）
 //------------------------------------------------------------------------------
 UnyuFileWatchStart
 {
-	"\![execute,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath)),--async=OnUnyuFileChange]"
+	_tags = ''
+	foreach unyu_watchfiles ; _path {
+		_tags += "\![execute,filewatch,%(AYATEMPLATE.EscapeText(_path)),--async=OnUnyuFileChange]"
+	}
+	_tags
+}
+
+UnyuFileWatchCancel
+{
+	_tags = ''
+	for _i = 0 ; _i < ARRAYSIZE(unyu_watchfiles) ; _i++ {
+		if unyu_filealive[_i] {
+			_tags += "\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchfiles[_i]))]"
+		}
+	}
+	_tags
+}
+
+//------------------------------------------------------------------------------
+// いちばん動いた（更新回数が多い）ファイルのひとこと。終わりの報告に添える
+// 見ているファイルが 1 つだけのとき、どれも動いていないときは空
+//------------------------------------------------------------------------------
+UnyuMostTouchedTalk
+{
+	if ARRAYSIZE(unyu_watchfiles) < 2 {
+		return ''
+	}
+
+	_best  = -1
+	_count = 0
+	for _i = 0 ; _i < ARRAYSIZE(unyu_watchfiles) ; _i++ {
+		if unyu_filecounts[_i] > _count {
+			_best  = _i
+			_count = unyu_filecounts[_i]
+		}
+	}
+
+	if _best < 0 {
+		return ''
+	}
+
+	"いちばんさわっとったんは、\w5「%(UnyuWatchFileTalkName(unyu_watchfiles[_best]))」やな。\w9\n"
 }
 
 //------------------------------------------------------------------------------
@@ -642,14 +1114,36 @@ OnUnyuFileChange
 		return
 	}
 
+	//---- どのファイルかは reference[1]（監視を始めたときのパスそのもの）で分かる
+	_i = ASEARCH(reference[1],unyu_watchfiles)
+
+	//---- 消された（名前を変えられた）。ファイルを消しても Failure は来ず、ここに deleted が来る
+	//---- 保存のときに消してから作り直すエディタもあるので、すぐには外さない
+	//---- 時刻を覚えておき、しばらくしても戻らなければ UnyuTick（UnyuWatchCheckGone）が外す
+	if reference[2] == 'deleted' {
+		if _i >= 0 && unyu_filegone[_i] == 0 {
+			unyu_filegone[_i] = GETTICKCOUNT
+		}
+		return
+	}
+
 	if reference[2] != 'modified' && reference[2] != 'created' {
 		return
+	}
+
+	//---- 消えたと思ったファイルが戻ってきた（消してから作り直す保存）
+	if _i >= 0 {
+		unyu_filegone[_i] = 0
 	}
 
 	if unyu_phase == 'work' {
 		unyu_count      = unyu_count + 1
 		unyu_cyclecount = unyu_cyclecount + 1
 		unyu_lasttick   = GETTICKCOUNT
+
+		if _i >= 0 {
+			unyu_filecounts[_i] += 1
+		}
 
 		//---- 保存されたので、また心配できるように戻す
 		unyu_saidsave = 0
@@ -668,13 +1162,87 @@ OnUnyuFileChange
 
 OnUnyuFileChangeFailure
 {
-	//---- 監視が続けられなくなった。この場合 SSP 側で監視は解除されている
-	_reason = reference[2]
+	//---- 監視が続けられなくなった（置き場所のフォルダが無くなった、など）。SSP 側で監視は解除されている
+	//---- reference[1] は監視を始めたときのパスそのもの。そのファイルだけを外す
+	if !unyu_running {
+		return
+	}
+
+	_i = ASEARCH(reference[1],unyu_watchfiles)
+	if _i < 0 {
+		//---- どのファイルか分からないときは、念のため全部止める
+		for _j = 0 ; _j < ARRAYSIZE(unyu_watchfiles) ; _j++ {
+			unyu_filealive[_j] = 0
+		}
+		return UnyuWatchStopTalk(reference[2])
+	}
+
+	UnyuWatchLost(_i,reference[2])
+}
+
+//------------------------------------------------------------------------------
+// 消されたまま戻ってこないファイルを外す（UnyuTick から、喋れるときに毎秒）
+// deleted が来てから 3 秒たっても無ければ、消された（名前を変えられた）とみなす
+// 一度に 1 つだけ扱う。外したときはその台詞を、何もなければ空を返す
+//------------------------------------------------------------------------------
+UnyuWatchCheckGone
+{
+	for _i = 0 ; _i < ARRAYSIZE(unyu_watchfiles) ; _i++ {
+		if unyu_filealive[_i] && unyu_filegone[_i] > 0 && GETTICKCOUNT - unyu_filegone[_i] >= 3000 {
+			if FSIZE(unyu_watchfiles[_i]) >= 0 {
+				//---- 通知は来なかったが、戻ってきている
+				unyu_filegone[_i] = 0
+			}
+			else {
+				return UnyuWatchLost(_i,'notfound')
+			}
+		}
+	}
+	''
+}
+
+//------------------------------------------------------------------------------
+// _argv[0] 番目のファイルが見られなくなった。_argv[1] は理由（Failure の reference[2] と同じ）
+// まだ見られるファイルが残っていれば、そのファイルだけ外して続ける。全部だめなら止める
+//------------------------------------------------------------------------------
+UnyuWatchLost
+{
+	_i = _argv[0]
+
+	unyu_filealive[_i] = 0
+	unyu_filegone[_i]  = 0
+
+	//---- 消されただけなら SSP はまだ監視を続けているので、ここで解除する（無ければ無視される）
+	_cancel = "\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchfiles[_i]))]"
+
+	_alive = 0
+	foreach unyu_filealive ; _a {
+		_alive += _a
+	}
+	if _alive > 0 {
+		return _cancel + DefaultSurface + "「%(UnyuWatchFileTalkName(unyu_watchfiles[_i]))」が見当たらんようになったから、\w5\nそれは外すで。\w9\n他のは、\w5このまま見とくわ。\e"
+	}
+
+	_cancel + UnyuWatchStopTalk(_argv[1])
+}
+
+//------------------------------------------------------------------------------
+// 見られるファイルが無くなったので止める。_argv[0] は理由
+//------------------------------------------------------------------------------
+UnyuWatchStopTalk
+{
+	_reason = _argv[0]
 
 	unyu_running = 0
+	unyu_phase   = ''
 
 	if _reason == 'notfound' {
-		'\0\s[0]あかん、ファイルが見当たらんようになったわ。\w9\n一旦止めるで。\e'
+		if ARRAYSIZE(unyu_watchfiles) > 1 {
+			'\0\s[0]あかん、見とったファイルが全部見当たらんようになったわ。\w9\n一旦止めるで。\e'
+		}
+		else {
+			'\0\s[0]あかん、ファイルが見当たらんようになったわ。\w9\n一旦止めるで。\e'
+		}
 	}
 	elseif _reason == 'notauthorized' {
 		'\0\s[0]すまん、外から呼ばれた分は見張れん決まりでな。\w9\nワイをつついて始めてな。\e'
@@ -702,6 +1270,15 @@ UnyuTick
 	//---- reference[3] はトークを再生できるときに 1、できないときは 0（UKADOC）
 	//---- 再生できないときに返したスクリプトは無視されるので、何もせずに返る
 	if reference[3] != '1' {
+		return
+	}
+
+	//---- 消されたまま戻ってこないファイルがあれば、先にそれを言う（作業中も休憩中も）
+	_lost = UnyuWatchCheckGone
+	if STRLEN(_lost) > 0 {
+		return _lost
+	}
+	if !unyu_running {
 		return
 	}
 
@@ -808,17 +1385,11 @@ UnyuNoticeTalk
 }
 
 //------------------------------------------------------------------------------
-// ファイルサイズの変化（バイト）。取れないときは 0
+// 開始時からのファイルサイズの変化（バイト。見ているファイルの合計）
 //------------------------------------------------------------------------------
 UnyuDiffByte
 {
-	_now = FSIZE(unyu_watchpath)
-
-	if _now < 0 || unyu_basesize < 0 {
-		return 0
-	}
-
-	_now - unyu_basesize
+	UnyuWatchDiff(unyu_basesize)
 }
 
 //------------------------------------------------------------------------------
@@ -870,7 +1441,7 @@ UnyuFinish
 
 	unyu_running = 0
 
-	"\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath))]"
+	UnyuFileWatchCancel
 	--
 	'\0\s[0]'
 	--
@@ -878,7 +1449,7 @@ UnyuFinish
 	--
 	UnyuFinishNotice
 	--
-	UnyuReportTalk(_min,_count,_diff)
+	UnyuReportTalk(_min,_count,_diff,UnyuMostTouchedTalk)
 }
 
 //------------------------------------------------------------------------------
@@ -894,6 +1465,8 @@ UnyuFinishNotice : nonoverlap
 
 //------------------------------------------------------------------------------
 // 終わりの報告
+// _argv[0] 分、_argv[1] 更新回数、_argv[2] サイズの変化（バイト）、すべて見ているファイルの合計
+// _argv[3] いちばん動いたファイルのひとこと（UnyuMostTouchedTalk。無ければ空）。数字の後に挟む
 //------------------------------------------------------------------------------
 UnyuReportTalk
 {
@@ -901,6 +1474,10 @@ UnyuReportTalk
 	_count = _argv[1]
 	_diff  = _argv[2]
 	_size  = UnyuSizeText(_diff)
+	_most  = ''
+	if _argc > 3 {
+		_most = _argv[3]
+	}
 
 	if _count <= 0 {
 		"この%(HAN2ZEN(_min,'num'))分、\w5更新はなしやったな。\w9\n考えとった時間かもしれんし、\w5それはそれでええ。\w9\nまたやろか？\e"
@@ -909,16 +1486,16 @@ UnyuReportTalk
 	}
 
 	if _diff > 0 {
-		"この%(HAN2ZEN(_min,'num'))分で監視対象ファイルの更新が%(HAN2ZEN(_count,'num'))回あったで。\w9\nファイルサイズは%(_size)変化しとったな。\w9\n進捗はどうや？\e"
-		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新、\w5%(_size)増えたで。\w9\nようやったな、%(username)。\w9\nちょっと休んどき。\e"
+		"この%(HAN2ZEN(_min,'num'))分で監視対象ファイルの更新が%(HAN2ZEN(_count,'num'))回あったで。\w9\nファイルサイズは%(_size)変化しとったな。\w9\n%(_most)進捗はどうや？\e"
+		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新、\w5%(_size)増えたで。\w9\n%(_most)ようやったな、%(username)。\w9\nちょっと休んどき。\e"
 	}
 	elseif _diff < 0 {
-		"更新%(HAN2ZEN(_count,'num'))回で、\w5%(_size)減っとるな。\w9\n削るんも進捗やで。\w9\nようやった。\e"
-		"この%(HAN2ZEN(_min,'num'))分、\w5%(HAN2ZEN(_count,'num'))回さわって%(_size)減ったわ。\w9\n刈り込んだんやな。\w9\nお疲れさん。\e"
+		"更新%(HAN2ZEN(_count,'num'))回で、\w5%(_size)減っとるな。\w9\n%(_most)削るんも進捗やで。\w9\nようやった。\e"
+		"この%(HAN2ZEN(_min,'num'))分、\w5%(HAN2ZEN(_count,'num'))回さわって%(_size)減ったわ。\w9\n%(_most)刈り込んだんやな。\w9\nお疲れさん。\e"
 	}
 	else {
-		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新やな。\w9\nサイズはほぼ変わらずや。\w9\n直しとったんか？\w9\nお疲れさん。\e"
-		"更新は%(HAN2ZEN(_count,'num'))回、\w5サイズは据え置きやな。\w9\n手を入れとったんやろ。\w9\nええ時間やったな。\e"
+		"%(HAN2ZEN(_min,'num'))分で%(HAN2ZEN(_count,'num'))回の更新やな。\w9\nサイズはほぼ変わらずや。\w9\n%(_most)直しとったんか？\w9\nお疲れさん。\e"
+		"更新は%(HAN2ZEN(_count,'num'))回、\w5サイズは据え置きやな。\w9\n%(_most)手を入れとったんやろ。\w9\nええ時間やったな。\e"
 	}
 }
 
@@ -994,7 +1571,7 @@ UnyuAbort
 
 	unyu_running = 0
 
-	"\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath))]"
+	UnyuFileWatchCancel
 	--
 	'\0\s[0]'
 	--
@@ -1140,8 +1717,9 @@ UnyuPomoMenu
 {
 	//---- まだ始めていない。unyu_mode は入力の後に戻る画面の目印（UnyuBackToSetup）
 	//---- unyu_limitmin を 0 にしておかないと、ファイルを決めた直後に始まってしまう（OnUnyuSetPath）
-	unyu_limitmin = 0
-	unyu_mode     = 'pomo'
+	unyu_limitmin    = 0
+	unyu_mode        = 'pomo'
+	unyu_inwatchmenu = 0
 
 	'\0\s[0]\![quicksection,1]'
 	--
@@ -1282,7 +1860,7 @@ UnyuPomoSetValue
 
 	if STRLEN(_text) == 0 {
 		_value = UnyuPomoDefault(_key)
-		_talk  = "空っぽやったから、\w5定番の%(HAN2ZEN(_value,'num'))%(_unit)にしといたで。"
+		_talk  = "空っぽやったから、定番の%(HAN2ZEN(_value,'num'))%(_unit)にしといたで。"
 	}
 	elseif !ISINTSTR(_text) {
 		return UnyuPomoMenu('数字で頼むわ。')
@@ -1308,7 +1886,7 @@ UnyuPomoStart
 	unyu_running   = 1
 	unyu_mode      = 'pomo'
 	unyu_limitmin  = unyu_pomo_work
-	unyu_basesize  = FSIZE(unyu_watchpath)
+	UnyuWatchBegin
 	unyu_count     = 0
 	unyu_starttick = GETTICKCOUNT
 	unyu_cycle     = 1
@@ -1356,7 +1934,7 @@ UnyuPomoBeginWork
 	unyu_lasttick   = GETTICKCOUNT
 	unyu_saidsave   = 0
 	unyu_cyclecount = 0
-	unyu_cyclebase  = FSIZE(unyu_watchpath)
+	unyu_cyclebase  = UnyuWatchSizes
 
 	'\0\s[1]' + UnyuSound('start') + _argv[0]
 }
@@ -1370,17 +1948,11 @@ UnyuPhaseMin
 }
 
 //------------------------------------------------------------------------------
-// 今の作業でのファイルサイズの変化（バイト）。取れないときは 0
+// 今の作業でのファイルサイズの変化（バイト。見ているファイルの合計）
 //------------------------------------------------------------------------------
 UnyuCycleDiffByte
 {
-	_now = FSIZE(unyu_watchpath)
-
-	if _now < 0 || unyu_cyclebase < 0 {
-		return 0
-	}
-
-	_now - unyu_cyclebase
+	UnyuWatchDiff(unyu_cyclebase)
 }
 
 //------------------------------------------------------------------------------
@@ -1564,7 +2136,7 @@ UnyuPomoQuit
 	unyu_running = 0
 	unyu_phase   = ''
 
-	"\![cancel,filewatch,%(AYATEMPLATE.EscapeText(unyu_watchpath))]"
+	UnyuFileWatchCancel
 	--
 	'\0\s[0]'
 	--
@@ -1574,10 +2146,10 @@ UnyuPomoQuit
 	elseif _done > 0 {
 		"%(HAN2ZEN(_done,'num'))回ぶん、\w5歩いたで。\w9\n"
 		--
-		UnyuReportTalk(_min,_count,_diff)
+		UnyuReportTalk(_min,_count,_diff,UnyuMostTouchedTalk)
 	}
 	else {
-		UnyuReportTalk(_min,_count,_diff)
+		UnyuReportTalk(_min,_count,_diff,UnyuMostTouchedTalk)
 	}
 }
 
