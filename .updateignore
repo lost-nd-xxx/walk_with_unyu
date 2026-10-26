@@ -1,6 +1,6 @@
-# Files excluded when creating network update files (updates2.dau), gitignore syntax.
-# Starts from the .narignore rules (including tools/devkit.narignore); later lines can add or re-include files.
+# ネットワーク更新ファイル（updates2.dau）を作るときに除外するファイル（gitignore の書式）。
+# .narignore の決まりを取り込んだうえで、後ろの行で除外を足したり、戻したりできる。
 include:.narignore
 
-# delete.txt is needed by network updates
+# delete.txt はネットワーク更新で使う
 !/delete.txt

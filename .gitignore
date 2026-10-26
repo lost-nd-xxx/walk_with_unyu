@@ -4,30 +4,24 @@
 /shell/master/profile/
 /ghost/master/messagetxt/*.bak
 /etc/tama.txt
+
+# nar とビルドの出力
 *.nar
 /build/
 
-# 開発キット（配布元 https://github.com/YAYA-shiori/konnoyayame から再導入できる）
+# AI エージェント（ukagaka-developer スキル）と開発用の文書。リポジトリには置かない
 /AGENTS.md
 /CLAUDE.md
-/DEVKIT-GUIDE.md
+/GHOST.md
 /.mcp.json
 /.claude/
-/.github/
-/docs/
-/tools/
-/ghost/master/yayalint_config.lua
+/.agents/
 
 # システム辞書の説明文書（yaya-dic に同梱。手元で読めればよい）
 /ghost/master/dic/system/docs/
-/ghost/master/system/docs/
 
-# キットが置いていくもの
-*.devkit-new
+# システム辞書の更新で置いていかれるもの
 *.yaya-dic-new
 
 # シェルの元データ（別途バックアップ。リポジトリには置かない）
 /_workspace/
-
-# 開発方針
-/GHOST.md
